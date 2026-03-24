@@ -1,0 +1,57 @@
+const router = require('express').Router();
+const Message = require('../models/Message');
+
+// helper for creating a consistent room id between two users
+function getRoom(a, b) {
+  return [a, b].sort().join('_');
+}
+
+// return all messages for a conversation (sorted by creation time)
+router.get('/:userId/:otherId', async (req, res) => {
+  try {
+    const room = getRoom(req.params.userId, req.params.otherId);
+    const msgs = await Message.find({ room }).sort('createdAt');
+    return res.json(msgs);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load messages' });
+  }
+});
+
+// mark all incoming messages in a room as seen
+router.post('/seen', async (req, res) => {
+  try {
+    const { userId, otherId } = req.body;
+    const room = getRoom(userId, otherId);
+    await Message.updateMany({ room, to: userId, seen: false }, { seen: true });
+    return res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to mark messages seen' });
+  }
+});
+
+// get unread message counts per sender for a given user
+router.get('/unread/:userId', async (req, res) => {
+  try {
+    const unseen = await Message.aggregate([
+      {
+        $match: { to: req.params.userId, seen: false }
+      },
+      {
+        $group: { _id: '$from', count: { $sum: 1 } }
+      }
+    ]);
+    // convert to { [senderId]: count } format
+    const counts = {};
+    unseen.forEach(item => {
+      counts[item._id] = item.count;
+    });
+    return res.json(counts);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load unread counts' });
+  }
+});
+
+module.exports = router;
