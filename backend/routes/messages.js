@@ -9,8 +9,16 @@ function getRoom(a, b) {
 // return all messages for a conversation (sorted by creation time)
 router.get('/:userId/:otherId', async (req, res) => {
   try {
-    const room = getRoom(req.params.userId, req.params.otherId);
-    const msgs = await Message.find({ room }).sort('createdAt');
+    const { isGroup } = req.query;
+    let room;
+    if (isGroup === 'true') {
+      room = req.params.otherId;
+    } else {
+      room = getRoom(req.params.userId, req.params.otherId);
+    }
+    const msgs = await Message.find({ room })
+      .sort('createdAt')
+      .populate('replyTo', 'message media from _id');
     return res.json(msgs);
   } catch (err) {
     console.error(err);

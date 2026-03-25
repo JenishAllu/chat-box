@@ -2,6 +2,8 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import "./Auth.css";
+
 function Auth() {
   const nav = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
@@ -29,18 +31,56 @@ function Auth() {
     }
   };
   return (
-    <div style={{ padding: 50 }}>
-      <h2>{isLogin ? "Login" : "Register"}</h2>
-      {error && <div style={{ color: 'red', marginBottom: 8 }}>{error}</div>}
-      <form onSubmit={submit}>
-        {!isLogin && <><input placeholder="Username" onChange={e => setForm({ ...form, username: e.target.value })} /><br /></>}
-        <input placeholder="Email" onChange={e => setForm({ ...form, email: e.target.value })} /><br />
-        <input type="password" placeholder="Password" onChange={e => setForm({ ...form, password: e.target.value })} /><br />
-        <button type="submit" disabled={loading}>{loading ? 'Please wait...' : (isLogin ? "Login" : "Register")}</button>
-      </form>
-      <p onClick={() => { setIsLogin(!isLogin); setError(""); }} style={{ cursor: "pointer", marginTop: 10 }}>
-        {isLogin ? "Create account" : "Already have account?"}
-      </p>
+    <div className="auth-page">
+      <div className="auth-card">
+        <div className="auth-header">
+          <h2>{isLogin ? "Welcome Back" : "Create Account"}</h2>
+          <p>{isLogin ? "Log in to continue your journey" : "Join us to get started with Insta Chat"}</p>
+        </div>
+        
+        {error && <div className="auth-error">{error}</div>}
+        
+        <form onSubmit={submit} className="auth-form">
+          {!isLogin && (
+            <div className="input-group">
+              <input 
+                type="text" 
+                placeholder="Username" 
+                value={form.username}
+                onChange={e => setForm({ ...form, username: e.target.value })} 
+              />
+            </div>
+          )}
+          <div className="input-group">
+            <input 
+              type="email" 
+              placeholder="Email" 
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })} 
+            />
+          </div>
+          <div className="input-group">
+            <input 
+              type="password" 
+              placeholder="Password" 
+              value={form.password}
+              onChange={e => setForm({ ...form, password: e.target.value })} 
+            />
+          </div>
+          <button type="submit" className="auth-submit" disabled={loading}>
+            {loading ? <span className="spinner"></span> : (isLogin ? "Login" : "Register")}
+          </button>
+        </form>
+        
+        <div className="auth-footer">
+          <p>
+            {isLogin ? "Don't have an account?" : "Already have an account?"}
+            <span onClick={() => { setIsLogin(!isLogin); setError(""); }} className="toggle-link">
+              {isLogin ? "Sign up" : "Log in"}
+            </span>
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

@@ -18,6 +18,10 @@ function Chat() {
   const displayName = (localUser && localUser.username) ? localUser.username : 'user1';
   const initials = displayName.split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase();
   const [users, setUsers] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupMembers, setNewGroupMembers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [msg, setMsg] = useState("");
   const [messages, setMessages] = useState([]); // chat history + live updates
@@ -25,13 +29,18 @@ function Chat() {
   const [selectedMedia, setSelectedMedia] = useState(null); // for sending media
   const [onlineUsers, setOnlineUsers] = useState({}); // track online status: { userId: isOnline }
   const [typingUser, setTypingUser] = useState(null); // typing state ID
+  const [replyingTo, setReplyingTo] = useState(null);
   const typingTimeoutRef = useRef(null);
   const messagesEndRef = useRef(null);
   const mediaFileRef = useRef();
+  const groupFileRef = useRef();
 
   useEffect(() => {
     axios.get("http://localhost:5000/api/users")
       .then(res => setUsers(res.data.filter(u => u._id !== localUser._id)));
+    axios.get(`http://localhost:5000/api/groups/${localUser._id}`)
+      .then(res => setGroups(res.data.map(g => ({ ...g, isGroup: true, username: g.name }))))
+      .catch(err => console.error("failed to load groups", err));
     // load unread counts from server (persists across refresh)
     axios.get(`http://localhost:5000/api/messages/unread/${localUser._id}`)
       .then(res => setUnreadCounts(res.data))
@@ -104,26 +113,31 @@ function Chat() {
       });
 
       // update unread count only if not from selected user
-      if (data.to === user._id && data.from !== selected?._id) {
-        setUnreadCounts(prev => ({
-          ...prev,
-          [data.from]: (prev[data.from] || 0) + 1
-        }));
+      if (data.isGroup) {
+        if (data.to !== selected?._id && data.from !== user._id) {
+          setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
+        }
+      } else {
+        if (data.to === user._id && data.from !== selected?._id) {
+          setUnreadCounts(prev => ({ ...prev, [data.from]: (prev[data.from] || 0) + 1 }));
+        }
       }
 
-      // always emit markSeen for incoming messages
-      if (data.to === user._id && data.from === selected?._id) {
+      // always emit markSeen for incoming dm messages
+      if (!data.isGroup && data.to === user._id && data.from === selected?._id) {
         socket.emit('markSeen', data._id);
       }
     };
 
     const backgroundHandler = (data) => {
-      // Only increment if we aren't currently chatting with them
-      if (data.from !== selected?._id) {
-        setUnreadCounts(prev => ({
-          ...prev,
-          [data.from]: (prev[data.from] || 0) + 1
-        }));
+      if (data.isGroup) {
+        if (data.to !== selected?._id && data.from !== user._id) {
+          setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
+        }
+      } else {
+        if (data.from !== selected?._id) {
+          setUnreadCounts(prev => ({ ...prev, [data.from]: (prev[data.from] || 0) + 1 }));
+        }
       }
     };
 
@@ -140,30 +154,55 @@ function Chat() {
   const openChat = async (u) => {
     setSelected(u);
     setMessages([]); // reset while loading
+    setReplyingTo(null);
     // clear unread count for this user
     setUnreadCounts(prev => ({ ...prev, [u._id]: 0 }));
 
     // load previous conversation from server
     try {
-      const res = await axios.get(`http://localhost:5000/api/messages/${user._id}/${u._id}`);
+      const qs = u.isGroup ? '?isGroup=true' : '';
+      const res = await axios.get(`http://localhost:5000/api/messages/${user._id}/${u._id}${qs}`);
       setMessages(res.data);
     } catch (err) {
       console.error("failed to load messages", err);
     }
 
-    // mark existing incoming messages as seen
-    try {
-      await axios.post("http://localhost:5000/api/messages/seen", {
-        userId: user._id,
-        otherId: u._id,
-      });
-      // update local copy so UI shows ticks
-      setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
-    } catch (e) {
-      console.error("failed to mark seen", e);
+    if (!u.isGroup) {
+      // mark existing incoming messages as seen
+      try {
+        await axios.post("http://localhost:5000/api/messages/seen", {
+          userId: user._id,
+          otherId: u._id,
+        });
+        setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
+      } catch (e) { console.error("failed to mark seen", e); }
+      socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
+    } else {
+      socket.emit("joinGroup", u._id);
     }
+  };
 
-    socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim() || newGroupMembers.length === 0) {
+      alert("Please provide a name and select at least one member.");
+      return;
+    }
+    try {
+      const res = await axios.post("http://localhost:5000/api/groups", {
+        name: newGroupName,
+        members: [...newGroupMembers, localUser._id],
+        admin: localUser._id
+      });
+      const newGroup = { ...res.data, isGroup: true, username: res.data.name };
+      setGroups(prev => [...prev, newGroup]);
+      setShowGroupModal(false);
+      setNewGroupName("");
+      setNewGroupMembers([]);
+      socket.emit("joinGroup", newGroup._id);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to create group");
+    }
   };
 
   // avatar upload
@@ -194,18 +233,55 @@ function Chat() {
     reader.readAsDataURL(f);
   };
 
+  const onGroupAvatarClick = () => selected?.isGroup && groupFileRef.current && groupFileRef.current.click();
+  const onGroupFile = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 500 * 1024) {
+      alert("Group avatar must be smaller than 500KB");
+      e.target.value = null;
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const res = await axios.put(`http://localhost:5000/api/groups/${selected._id}/avatar`, { avatar: reader.result });
+        const updatedGroup = { ...res.data, isGroup: true, username: res.data.name };
+        setGroups(prev => prev.map(g => g._id === updatedGroup._id ? updatedGroup : g));
+        setSelected(updatedGroup);
+      } catch (err) {
+        console.error('group avatar upload failed', err);
+      }
+    };
+    reader.readAsDataURL(f);
+  };
+
   const send = () => {
-    if (!msg.trim() && !selectedMedia || !selected) return;
+    if (!msg.trim() && !selectedMedia) return;
+    if (!selected) return;
 
     const payload = { from: user._id, to: selected._id, message: msg };
+    if (selected.isGroup) {
+      payload.isGroup = true;
+    }
     if (selectedMedia) {
       payload.media = selectedMedia;
     }
+    if (replyingTo) {
+      payload.replyTo = replyingTo._id;
+    }
+    
     // optimistic update so UI feels snappy (no _id yet)
-    setMessages(prev => [...prev, { ...payload, room: room(user._id, selected._id), seen: false }]);
+    const optimisticMsg = { ...payload, room: selected.isGroup ? selected._id : room(user._id, selected._id), seen: false };
+    if (replyingTo) {
+      optimisticMsg.replyTo = replyingTo;
+    }
+    setMessages(prev => [...prev, optimisticMsg]);
+    
     socket.emit("sendMessage", payload);
     setMsg("");
     setSelectedMedia(null);
+    setReplyingTo(null);
   };
 
   const handleTyping = (e) => {
@@ -273,21 +349,30 @@ function Chat() {
     <div className="chat-root">
       <div className="sidebar">
         <div className="sidebar-header">
-          <div className="avatar" onClick={onAvatarClick} style={{ cursor: 'pointer' }}>
+          <div className="avatar editable-avatar" onClick={onAvatarClick} style={{ cursor: 'pointer' }} title="Change Profile Avatar">
             {localUser.avatar ? <img src={localUser.avatar} alt="avatar" /> : initials}
+            <div className="edit-overlay">✎</div>
           </div>
           <div className="user-name">{displayName}</div>
           <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} />
           <button className="logout-btn" onClick={logout}>Logout</button>
         </div>
+
+        <div className="sidebar-actions">
+          <h3>Chats & Groups</h3>
+          <button className="create-group-btn" onClick={() => setShowGroupModal(true)} title="Create Group">+</button>
+        </div>
+
         <div className="users-list">
-          {users.map(u => {
+          {[...groups, ...users].map(u => {
             const unread = unreadCounts[u._id] || 0;
-            const isOnline = onlineUsers[u._id] || false;
+            const isOnline = !u.isGroup && (onlineUsers[u._id] || false);
             return (
               <div key={u._id} className="user-item" onClick={() => openChat(u)}>
                 <div style={{ position: 'relative' }}>
-                  <div className="user-avatar">{u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}</div>
+                  <div className="user-avatar" style={u.isGroup ? { borderRadius: '8px' } : {}}>
+                    {u.avatar ? <img src={u.avatar} alt="u" style={u.isGroup ? { borderRadius: '8px' } : {}} /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+                  </div>
                   {isOnline && <div className="online-indicator"></div>}
                 </div>
                 <div className="user-meta"><div className="user-name">{u.username || 'user1'}</div></div>
@@ -301,15 +386,43 @@ function Chat() {
         {selected ? (
           <>
             <div className="chat-top">
-              <div className="other-avatar">{(selected.username || 'U').slice(0, 1).toUpperCase()}</div>
-              <div style={{ fontWeight: 700 }}>{selected.username || 'user1'}</div>
+              <div 
+                className={`other-avatar ${selected.isGroup ? 'editable-avatar' : ''}`} 
+                style={selected.isGroup ? { borderRadius: '8px', cursor: 'pointer' } : {}}
+                onClick={onGroupAvatarClick}
+                title={selected.isGroup ? "Change Group Icon" : ""}
+              >
+                {selected.avatar ? <img src={selected.avatar} alt="u" style={{ borderRadius: 'inherit' }} /> : (selected.username || 'U').slice(0, 1).toUpperCase()}
+                {selected.isGroup && <div className="edit-overlay">✎</div>}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div style={{ fontWeight: 700 }}>{selected.username || 'user1'}</div>
+                {selected.isGroup && selected.members && (
+                  <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                    {selected.members.map(m => m.username).join(', ')}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="messages">
               {messages
-                .filter(m => (m.room && m.room === room(user._id, selected._id)) || room(m.from, m.to) === room(user._id, selected._id))
+                .filter(m => selected.isGroup ? m.room === selected._id : ((m.room && m.room === room(user._id, selected._id)) || room(m.from, m.to) === room(user._id, selected._id)))
                 .map((m, i) => (
                   <div key={m._id || i} className={`message ${m.from === user._id ? 'sent' : 'received'}`}>
+                    {m.from === user._id && (
+                      <button className="reply-btn" onClick={() => setReplyingTo(m)} title="Reply">↩️</button>
+                    )}
                     <div className={`bubble ${m.from === user._id ? 'sent' : 'received'}`}>
+                      {m.replyTo && (
+                        <div className="replied-snippet">
+                          <div className="replied-from">
+                            {m.replyTo.from === user._id ? 'You' : (selected?.username || 'User')}
+                          </div>
+                          <div className="replied-text">
+                            {m.replyTo.message ? m.replyTo.message : (m.replyTo.media ? 'Attachment' : '')}
+                          </div>
+                        </div>
+                      )}
                       {m.media ? (
                         <div>
                           {m.media.type?.startsWith('image/') ? (
@@ -332,6 +445,9 @@ function Chat() {
                       )}
                       <div className="meta">{m.from === user._id ? (m.seen ? 'Seen' : 'Sent') : ''}</div>
                     </div>
+                    {m.from !== user._id && (
+                      <button className="reply-btn" onClick={() => setReplyingTo(m)} title="Reply">↩️</button>
+                    )}
                   </div>
                 ))}
               {typingUser === selected._id && (
@@ -341,18 +457,69 @@ function Chat() {
               )}
               <div ref={messagesEndRef} />
             </div>
-            <div className="input-area">
-              <textarea value={msg} onChange={handleTyping} onKeyDown={onKeyDown} placeholder="Type a message..." />
-              <button className="media-btn" onClick={onMediaBtnClick} title="Send media">📎</button>
-              <input ref={mediaFileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={onMediaFile} />
-              {selectedMedia && <div className="media-preview">📤 {selectedMedia.name}</div>}
-              <button className="send-button" onClick={send}>Send</button>
+            <div className="input-area" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              {replyingTo && (
+                <div className="replying-indicator">
+                  <div className="replying-indicator-content">
+                    <strong>Replying to {replyingTo.from === user._id ? 'You' : (selected?.username || 'User')}</strong>
+                    <span>{replyingTo.message ? replyingTo.message : (replyingTo.media ? 'Attachment' : '')}</span>
+                  </div>
+                  <button className="close-reply" onClick={() => setReplyingTo(null)}>✖</button>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '8px', width: '100%', alignItems: 'flex-end' }}>
+                <textarea value={msg} onChange={handleTyping} onKeyDown={onKeyDown} placeholder="Type a message..." />
+                <button className="media-btn" onClick={onMediaBtnClick} title="Send media">📎</button>
+                <input ref={mediaFileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={onMediaFile} />
+                {selectedMedia && <div className="media-preview">📤 {selectedMedia.name}</div>}
+                <button className="send-button" onClick={send}>Send</button>
+              </div>
             </div>
+            <input ref={groupFileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onGroupFile} />
           </>
         ) : (
           <div style={{ color: '#94a3b8', padding: 20 }}>Select a user to start chatting</div>
         )}
       </div>
+
+      {showGroupModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2>Create Group</h2>
+            <input 
+              type="text" 
+              placeholder="Group Name" 
+              value={newGroupName} 
+              onChange={e => setNewGroupName(e.target.value)} 
+            />
+            <div className="modal-users-list">
+              {users.map(u => {
+                const isSelected = newGroupMembers.includes(u._id);
+                return (
+                  <div 
+                    key={u._id} 
+                    className={`modal-user-item ${isSelected ? 'selected' : ''}`}
+                    onClick={() => {
+                      if (isSelected) setNewGroupMembers(prev => prev.filter(id => id !== u._id));
+                      else setNewGroupMembers(prev => [...prev, u._id]);
+                    }}
+                  >
+                    <div className="user-avatar" style={{ transform: 'scale(0.8)', marginRight: '10px' }}>
+                      {u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+                    </div>
+                    {u.username || 'user1'}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="modal-actions">
+              <button className="modal-btn cancel" onClick={() => setShowGroupModal(false)}>Cancel</button>
+              <button className="modal-btn submit" onClick={handleCreateGroup}>Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

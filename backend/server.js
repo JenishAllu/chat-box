@@ -20,6 +20,7 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/users", require("./routes/users"));
+app.use("/api/groups", require("./routes/groups"));
 // new messages routes for fetching history and marking seen
 app.use("/api/messages", require("./routes/messages"));
 
@@ -56,6 +57,15 @@ io.on("connection", (socket) => {
     const onlineMap = {};
     Object.keys(onlineUsers).forEach(id => { onlineMap[id] = true; });
     socket.emit('onlineList', onlineMap);
+    
+    // Join all group rooms
+    try {
+      const Group = require("./models/Group");
+      const userGroups = await Group.find({ members: userId });
+      userGroups.forEach(g => socket.join(g._id.toString()));
+    } catch (err) {
+      console.error("Error joining groups:", err);
+    }
   });
 
   socket.on("joinRoom", ({ userId, otherUserId }) => {
@@ -63,26 +73,36 @@ io.on("connection", (socket) => {
     socket.join(room);
   });
 
+  socket.on("joinGroup", (groupId) => {
+    if (groupId) socket.join(groupId);
+  });
+
   socket.on("sendMessage", async (data) => {
     try {
-      const { from, to, message, media } = data;
-      const room = getRoom(from, to);
-      const msgData = { room, from, to, message, seen: false };
+      const { from, to, message, media, replyTo, isGroup } = data;
+      const room = isGroup ? to : getRoom(from, to);
+      const msgData = { room, from, to, message, seen: false, isGroup: isGroup || false };
       if (media) {
         msgData.media = media;
       }
-      const newMsg = await Message.create(msgData);
+      if (replyTo) {
+        msgData.replyTo = replyTo;
+      }
+      let newMsg = await Message.create(msgData);
+
+      if (replyTo) {
+        newMsg = await Message.findById(newMsg._id).populate('replyTo', 'message media from _id');
+      }
 
       // emit to the active chat room (so sender and active recipient see it immediately)
       io.to(room).emit("receiveMessage", newMsg);
 
-      // if the recipient is online but not currently in this specific chat room, 
-      // they still need the background 'receiveMessage' event to tick up their badge count.
-      // we emit directly to their Socket ID.
-      const recipientSocketId = onlineUsers[to];
-      if (recipientSocketId) {
-        // use a special event or just emit the same one directly to their root socket
-        io.to(recipientSocketId).emit("backgroundMessage", newMsg);
+      // if it's a 1-on-1 message, send background notification
+      if (!isGroup) {
+        const recipientSocketId = onlineUsers[to];
+        if (recipientSocketId) {
+          io.to(recipientSocketId).emit("backgroundMessage", newMsg);
+        }
       }
     } catch (err) {
       console.error("Socket error on sendMessage", err);
