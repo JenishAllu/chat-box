@@ -25,7 +25,37 @@ function Chat() {
   const [selected, setSelected] = useState(null);
   const [msg, setMsg] = useState("");
   const [messages, setMessages] = useState([]); // chat history + live updates
-  const [unreadCounts, setUnreadCounts] = useState({}); // track unread per user
+  const [unreadCounts, setUnreadCounts] = useState({});
+
+  const formatTime = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+  
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/')) {
+        const r = new FileReader(); r.onload = e => resolve(e.target.result); r.readAsDataURL(file);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image(); img.src = e.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let { width, height } = img; const MAX = 1200;
+          if (width > height && width > MAX) { height *= MAX / width; width = MAX; }
+          else if (height > MAX) { width *= MAX / height; height = MAX; }
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL(file.type === 'image/png' ? 'image/jpeg' : file.type, 0.7));
+        };
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   const [selectedMedia, setSelectedMedia] = useState(null); // for sending media
   const [onlineUsers, setOnlineUsers] = useState({}); // track online status: { userId: isOnline }
   const [typingUser, setTypingUser] = useState(null); // typing state ID
@@ -94,9 +124,15 @@ function Chat() {
     };
   }, []);
 
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
   // listen for new messages from socket; clean up on unmount to avoid duplicates
   useEffect(() => {
     const handler = (data) => {
+      const currentSelected = selectedRef.current;
       // if server already sent this message (has _id), ignore duplicate
       setMessages(prev => {
         if (data._id && prev.some(m => m._id === data._id)) return prev;
@@ -114,41 +150,54 @@ function Chat() {
 
       // update unread count only if not from selected user
       if (data.isGroup) {
-        if (data.to !== selected?._id && data.from !== user._id) {
+        if (data.to !== currentSelected?._id && data.from !== user._id) {
           setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
         }
       } else {
-        if (data.to === user._id && data.from !== selected?._id) {
+        if (data.to === user._id && data.from !== currentSelected?._id) {
           setUnreadCounts(prev => ({ ...prev, [data.from]: (prev[data.from] || 0) + 1 }));
         }
       }
 
       // always emit markSeen for incoming dm messages
-      if (!data.isGroup && data.to === user._id && data.from === selected?._id) {
+      if (!data.isGroup && data.to === user._id && data.from === currentSelected?._id) {
         socket.emit('markSeen', data._id);
       }
     };
 
     const backgroundHandler = (data) => {
+      const currentSelected = selectedRef.current;
       if (data.isGroup) {
-        if (data.to !== selected?._id && data.from !== user._id) {
+        if (data.to !== currentSelected?._id && data.from !== user._id) {
           setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
         }
       } else {
-        if (data.from !== selected?._id) {
+        if (data.from !== currentSelected?._id) {
           setUnreadCounts(prev => ({ ...prev, [data.from]: (prev[data.from] || 0) + 1 }));
         }
       }
     };
 
+    const seenHandler = (msgId) => {
+      setMessages(prev => prev.map(m => m._id === msgId ? { ...m, seen: true } : m));
+    };
+
+    const allSeenHandler = ({ viewerId }) => {
+      setMessages(prev => prev.map(m => m.to === viewerId ? { ...m, seen: true } : m));
+    };
+
     socket.on("receiveMessage", handler);
     socket.on("backgroundMessage", backgroundHandler);
+    socket.on("messageSeen", seenHandler);
+    socket.on("allMessagesSeen", allSeenHandler);
 
     return () => {
       socket.off("receiveMessage", handler);
       socket.off("backgroundMessage", backgroundHandler);
+      socket.off("messageSeen", seenHandler);
+      socket.off("allMessagesSeen", allSeenHandler);
     };
-  }, [user._id, selected]);
+  }, [user._id]);
 
   // fetch history and join socket room when a user is selected
   const openChat = async (u) => {
@@ -177,6 +226,7 @@ function Chat() {
         setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
       } catch (e) { console.error("failed to mark seen", e); }
       socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
+      socket.emit("markAllSeen", { userId: user._id, otherUserId: u._id });
     } else {
       socket.emit("joinGroup", u._id);
     }
@@ -211,49 +261,31 @@ function Chat() {
   const onFile = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-
-    // limit avatar size to 500KB to prevent localStorage QuotaExceededError
-    if (f.size > 500 * 1024) {
-      alert("Avatar image must be smaller than 500KB");
-      e.target.value = null;
-      return;
+    try {
+      const dataUrl = await compressImage(f);
+      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/avatar`, { avatar: dataUrl });
+      setLocalUser(res.data);
+      localStorage.setItem('user', JSON.stringify(res.data));
+    } catch (err) {
+      console.error('avatar upload failed', err);
     }
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = reader.result;
-      try {
-        const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/avatar`, { avatar: dataUrl });
-        setLocalUser(res.data);
-        localStorage.setItem('user', JSON.stringify(res.data));
-      } catch (err) {
-        console.error('avatar upload failed', err);
-      }
-    };
-    reader.readAsDataURL(f);
+    e.target.value = null;
   };
 
   const onGroupAvatarClick = () => selected?.isGroup && groupFileRef.current && groupFileRef.current.click();
   const onGroupFile = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-    if (f.size > 500 * 1024) {
-      alert("Group avatar must be smaller than 500KB");
-      e.target.value = null;
-      return;
+    try {
+      const dataUrl = await compressImage(f);
+      const res = await axios.put(`http://localhost:5000/api/groups/${selected._id}/avatar`, { avatar: dataUrl });
+      const updatedGroup = { ...res.data, isGroup: true, username: res.data.name };
+      setGroups(prev => prev.map(g => g._id === updatedGroup._id ? updatedGroup : g));
+      setSelected(updatedGroup);
+    } catch (err) {
+      console.error('group avatar upload failed', err);
     }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const res = await axios.put(`http://localhost:5000/api/groups/${selected._id}/avatar`, { avatar: reader.result });
-        const updatedGroup = { ...res.data, isGroup: true, username: res.data.name };
-        setGroups(prev => prev.map(g => g._id === updatedGroup._id ? updatedGroup : g));
-        setSelected(updatedGroup);
-      } catch (err) {
-        console.error('group avatar upload failed', err);
-      }
-    };
-    reader.readAsDataURL(f);
+    e.target.value = null;
   };
 
   const send = () => {
@@ -272,7 +304,7 @@ function Chat() {
     }
     
     // optimistic update so UI feels snappy (no _id yet)
-    const optimisticMsg = { ...payload, room: selected.isGroup ? selected._id : room(user._id, selected._id), seen: false };
+    const optimisticMsg = { ...payload, room: selected.isGroup ? selected._id : room(user._id, selected._id), seen: false, createdAt: new Date().toISOString() };
     if (replyingTo) {
       optimisticMsg.replyTo = replyingTo;
     }
@@ -311,25 +343,13 @@ function Chat() {
   const onMediaFile = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-
-    // limit size to ~5MB to prevent socket crash
-    if (f.size > 5 * 1024 * 1024) {
-      alert("File size exceeds 5MB limit.");
-      e.target.value = null; // clear selection
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSelectedMedia({
-        data: reader.result.split(',')[1], // remove data:image/...;base64, prefix
-        type: f.type,
-        name: f.name
-      });
-      // automatically clear file input so same file can be selected again
-      e.target.value = null;
-    };
-    reader.readAsDataURL(f);
+    const dataUrl = await compressImage(f);
+    setSelectedMedia({
+      data: dataUrl.split(',')[1],
+      type: f.type,
+      name: f.name
+    });
+    e.target.value = null;
   };
 
   // scroll to bottom whenever messages change
@@ -407,18 +427,46 @@ function Chat() {
             <div className="messages">
               {messages
                 .filter(m => selected.isGroup ? m.room === selected._id : ((m.room && m.room === room(user._id, selected._id)) || room(m.from, m.to) === room(user._id, selected._id)))
-                .map((m, i) => (
-                  <div key={m._id || i} className={`message ${m.from === user._id ? 'sent' : 'received'}`}>
-                    {m.from === user._id && (
-                      <button className="reply-btn" onClick={() => setReplyingTo(m)} title="Reply">↩️</button>
-                    )}
-                    <div className={`bubble ${m.from === user._id ? 'sent' : 'received'}`}>
-                      {m.replyTo && (
-                        <div className="replied-snippet">
-                          <div className="replied-from">
-                            {m.replyTo.from === user._id ? 'You' : (selected?.username || 'User')}
+                .map((m, i, arr) => {
+                  const timeStr = formatTime(m.createdAt || new Date());
+                  let showName = false;
+                  let showTime = false;
+                  
+                  if (i === 0) {
+                    showName = selected.isGroup && m.from !== user._id;
+                    showTime = true;
+                  } else {
+                    const prev = arr[i - 1];
+                    const prevTimeStr = formatTime(prev.createdAt || new Date());
+                    if (prev.from !== m.from) {
+                      showName = selected.isGroup && m.from !== user._id;
+                      showTime = true;
+                    } else if (timeStr !== prevTimeStr) {
+                      showTime = true; // same sender, different minute
+                    }
+                  }
+
+                  return (
+                    <div key={m._id || i} className={`message ${m.from === user._id ? 'sent' : 'received'}`}>
+                      {m.from === user._id && (
+                        <button className="reply-btn" onClick={() => setReplyingTo(m)} title="Reply">↩️</button>
+                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: m.from === user._id ? 'flex-end' : 'flex-start', maxWidth: '75%' }}>
+                        {showTime && (
+                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginLeft: m.from === user._id ? '0' : '12px', marginRight: m.from === user._id ? '12px' : '0', marginBottom: '4px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            {showName && <span>{users.find(u => u._id === m.from)?.username || 'User'}</span>}
+                            {showName && <span>•</span>}
+                            <span>{timeStr}</span>
                           </div>
-                          <div className="replied-text">
+                        )}
+                        <div className={`bubble ${m.from === user._id ? 'sent' : 'received'}`} style={{ maxWidth: '100%' }}>
+                    {/* Inline Replied Snippet */}
+                    {m.replyTo && (
+                      <div className="replied-snippet">
+                        <div className="replied-from">
+                          {m.replyTo.from === user._id ? 'You' : (users.find(u => u._id === m.replyTo.from)?.username || selected?.username || 'User')}
+                        </div>
+                        <div className="replied-text">
                             {m.replyTo.message ? m.replyTo.message : (m.replyTo.media ? 'Attachment' : '')}
                           </div>
                         </div>
@@ -445,11 +493,13 @@ function Chat() {
                       )}
                       <div className="meta">{m.from === user._id ? (m.seen ? 'Seen' : 'Sent') : ''}</div>
                     </div>
-                    {m.from !== user._id && (
-                      <button className="reply-btn" onClick={() => setReplyingTo(m)} title="Reply">↩️</button>
-                    )}
                   </div>
-                ))}
+                  {m.from !== user._id && (
+                    <button className="reply-btn" onClick={() => setReplyingTo(m)} title="Reply">↩️</button>
+                  )}
+                </div>
+              );
+            })}
               {typingUser === selected._id && (
                 <div className="typing-indicator" style={{ color: '#6ee7b7', fontSize: '12px', padding: '10px', fontStyle: 'italic', animation: 'fadeInUp 0.3s forwards' }}>
                   {selected.username || 'user'} is typing...
@@ -459,11 +509,13 @@ function Chat() {
             </div>
             <div className="input-area" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
               {replyingTo && (
-                <div className="replying-indicator">
-                  <div className="replying-indicator-content">
-                    <strong>Replying to {replyingTo.from === user._id ? 'You' : (selected?.username || 'User')}</strong>
-                    <span>{replyingTo.message ? replyingTo.message : (replyingTo.media ? 'Attachment' : '')}</span>
-                  </div>
+            <div className="replying-indicator">
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 600, marginBottom: '2px' }}>
+                  Replying to {replyingTo.from === user._id ? 'yourself' : (users.find(u => u._id === replyingTo.from)?.username || selected?.username || 'User')}
+                </div>
+                <span>{replyingTo.message ? replyingTo.message : (replyingTo.media ? 'Attachment' : '')}</span>
+              </div>
                   <button className="close-reply" onClick={() => setReplyingTo(null)}>✖</button>
                 </div>
               )}

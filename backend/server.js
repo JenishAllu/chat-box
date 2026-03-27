@@ -112,10 +112,19 @@ io.on("connection", (socket) => {
   socket.on("markSeen", async (id) => {
     try {
       if (!id) return;
-      await Message.findByIdAndUpdate(id, { seen: true });
+      const updatedMsg = await Message.findByIdAndUpdate(id, { seen: true }, { new: true });
+      if (updatedMsg) {
+        io.to(updatedMsg.room).emit("messageSeen", updatedMsg._id);
+      }
     } catch (err) {
       console.error("Socket error on markSeen", err);
     }
+  });
+
+  socket.on("markAllSeen", ({ userId, otherUserId }) => {
+    const room = getRoom(userId, otherUserId);
+    // emit to everyone else in the room (the sender whose messages were just seen)
+    socket.to(room).emit("allMessagesSeen", { viewerId: userId });
   });
 
   socket.on("typing", ({ from, to }) => {

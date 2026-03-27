@@ -18,7 +18,8 @@ router.get('/:userId/:otherId', async (req, res) => {
     }
     const msgs = await Message.find({ room })
       .sort('createdAt')
-      .populate('replyTo', 'message media from _id');
+      .populate('replyTo', 'message media from _id')
+      .lean();
     return res.json(msgs);
   } catch (err) {
     console.error(err);

@@ -14,4 +14,7 @@ const messageSchema = new mongoose.Schema({
   isGroup: { type: Boolean, default: false },
   seen: { type: Boolean, default: false }
 }, { timestamps: true });
+
+messageSchema.index({ room: 1, createdAt: 1 });
+
 module.exports = mongoose.model("Message", messageSchema);
