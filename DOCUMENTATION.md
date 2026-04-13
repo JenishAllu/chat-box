@@ -1,112 +1,358 @@
-# Advanced Real-Time Chat System
+﻿# Advanced Real-Time Insta Chat System - Full Documentation
 
-Welcome to the **Advanced Real-Time Chat System** repository! This is a state-of-the-art, feature-dense messaging application built to maximize hardware performance and network responsiveness. It offers premium chat features natively decoupled from standard HTTP sluggishness.
+This document is the complete technical documentation of the current working project state, including:
+- What was changed
+- How the system works end-to-end
+- Detailed code explanation by file
+- API and Socket events reference
+- Encryption design and receiver decryption fix
+- Validation and testing guide
 
----
+## 1. Project Overview
 
-## 🚀 Key Features
+This is a full-stack real-time chat platform built with:
+- Frontend: React, Axios, Socket.IO Client, CryptoJS
+- Backend: Node.js, Express, Socket.IO Server
+- Database: MongoDB with Mongoose
 
-### 1. Advanced Messaging & UI Capabilities
-- **Real-Time 1-on-1 Chat**: Drop-in WebSocket messaging instantly connects peers without any HTTP-polling latency.
-- **Group Chats**: Effortlessly create groups, multi-select participating members, and natively manage chat threads natively decoupled from direct messages.
-- **Nested Thread Replies**: Hover over any message explicitly to hit "Reply." The interface cleanly isolates your message within the new bubble context while highlighting the original sender's name explicitly.
-- **Smart Contiguous Timestamps**: Contiguous messages sent within the same minute limit seamlessly merge into a unified visually-appealing column. The UI drops duplicate sender names and timestamps explicitly to reduce screen clutter.
-- **Typing Indicators**: Accurate real-time mapping indicating exactly when peers or group members are typing.
-- **Live Read Receipts**: Direct Message explicitly transitions from "Sent" to "Seen" the exact millisecond the participant's app maps to your chat view cleanly binding local `messageSeen` and `allMessagesSeen` sockets.
+Core capabilities:
+- Authentication (register/login)
+- 1-to-1 chat and group chat
+- Media attachments
+- Message replies, edit, delete, clear
+- Seen status and unread counts
+- Typing indicators and online/offline presence
+- Follow/request/accept social gating for direct messages
+- Profile avatar, profile info, block/unblock users
+- Client-side AES encryption/decryption for message bodies
 
-### 2. Intelligent Media Handlers
-- **Media Transmissions**: Upload pictures, videos, and general attachment PDFs aggressively. 
-- **Dynamic Avatars**: Both individual Users and Group channels effortlessly support custom base64 Avatar uploads natively bounded to an intuitive hover-overlay "✎" mechanism.
-- **Native Image Compression API**: Automatically overrides standard file transmission by capturing heavy >5MB High-Definition photos natively crushing them quietly on the background Canvas Thread to cleanly compressed ~200KB payloads to ensure socket connections and Database mapping never crash.
+## 2. Important Changes Implemented
 
-### 3. Engine Performance Optimizations
-- **Zero-Drop React WebSocket Sync**: Aggressively mitigates React `useEffect` rendering loops isolating dynamic payloads internally via `useRef`. This means intensely clicking and spamming channels will never detach or lose the parent Socket connection!
-- **Lean Mongoose Processing**: Complete integration mapping `.lean()` objects aggressively decoupling large backend overhead logic and returning pure JSON blocks drastically scaling Chat History query outputs by up to 5x natively.
-- **Compound Database Indices**: The `Message` schema binds native `{ room: 1, createdAt: 1 }` optimizations structurally ensuring instant payload retrieval even when the Database hits millions of records.
+### 2.1 Social and Access-Control Changes
+- Added follow/follower model fields.
+- Added chat request workflow:
+  - Follow or request-chat can create incoming request.
+  - Receiver can accept/decline.
+  - Direct messages are blocked unless both users accepted each other.
+- Added block/unblock behavior:
+  - Blocking removes social links and accepted chat links between both users.
+  - Messaging blocked when sender or receiver is blocked.
 
----
+### 2.2 Chat UX and Messaging Changes
+- Added real-time request notification and acceptance notification.
+- Added unread counters and seen synchronization.
+- Added editing and deletion options.
+- Added clear chat options (for self / everyone).
+- Added reply-to message support.
+- Added image compression before upload.
+- Added avatar upload for users and groups.
 
-## 🧠 System Architecture: How It Works
+### 2.3 Encryption Changes (Current Working Model)
+- Messages are encrypted on client before sending and decrypted on client after receiving.
+- Server stores encrypted payload and never decrypts message text.
+- Current key model in Chat.js uses deterministic shared key:
+  - SECRET_SALT = INSTA_CHAT_SYSTEM_E2E_MESSAGE_ENCRYPTION_2024
+  - ENCRYPTION_KEY = SHA256(SECRET_SALT)
+- This model ensures both sender and receiver can decrypt the same ciphertext.
+- This specifically fixes the issue where receiver previously saw encrypted text like U2FsdGVkX1...
 
-This application utilizes a completely decoupled Client-Server architecture utilizing WebSockets for live data flow and REST APIs for structural persistence.
+## 3. End-to-End Runtime Flow
 
-### 1. Authentication & Persistence
-When a user logs in via `Auth.js`, the Express backend cleanly hashes the password via `bcrypt` and generates an encrypted **JSON Web Token (JWT)** payload. The frontend React Client securely stores this User object natively inside the browser's `localStorage`. This guarantees instant user mapping across page refreshes.
+### 3.1 Authentication Flow
+1. User submits form in Auth.js.
+2. Frontend posts to /api/auth/register or /api/auth/login.
+3. Backend hashes/compares password and returns JWT + user object.
+4. Frontend stores user object in localStorage and navigates to /chat.
 
-### 2. WebSocket Channel Initialization 
-Upon launching the Chat Dashboard (`Chat.js`), an active WebSocket tunnel via `Socket.IO` immediately binds the global user environment to the Express server natively emitting a `setUserId` packet.
-- When an individual chat is selected natively, React hits the REST API endpoint `GET /api/messages/:userId/:otherId` rapidly pulling `.lean()` mapped chat objects.
-- React immediately commands the WebSocket server emitting `joinRoom`. The socket isolates your connection exclusively isolating live broadcasts to solely the active participants.
+### 3.2 Real-Time Connection Flow
+1. Chat.js mounts and loads user/groups/unread data using REST APIs.
+2. Client emits setUserId through socket.
+3. Server registers onlineUsers map, emits online list and userOnline events.
+4. Client listens for presence, typing, social notifications, and message events.
 
-### 3. Optimistic Updates & Live Dispatching
-When you send a message, the app handles it "Optimistically."
-- **Client Side**: Instead of waiting 1500ms for network latency, React instantaneously compiles your message payload predicting the DB schema natively returning it directly into the Messages UI. This allows the application to feel lightning-fast.
-- **Websocket Emission**: The exact payload gets actively transmitted globally via `sendMessage` socket emission. 
-- **Server Injection**: The Node.js Express backend captures the payload, natively persists it securely utilizing `Message.create()`, and natively blasts the confirmed Database object cleanly out via WebSockets using `io.to(room).emit()`.
+### 3.3 Direct Message Send Flow
+1. User types message and clicks send.
+2. Chat.js encrypts message text with ENCRYPTION_KEY.
+3. Client emits sendMessage with encrypted payload.
+4. Server validates block and acceptedChats gating.
+5. Server stores message in MongoDB and emits receiveMessage.
+6. Receiver decrypts on client and sees plaintext in UI.
 
-### 4. Dynamic Live Receipt Synchronization
-When a peer successfully retrieves your payload, their Application immediately commands an explicit `markSeen` payload globally broadcasting the explicit Database Primary Key directly back to your React Component. Your UI maps the payload explicitly swapping the string tag from `Sent` to `Seen` locally seamlessly bypassing costly HTTP refreshes entirely mapping `allMessagesSeen` for batch loads!
+### 3.4 Message Seen/Unread Flow
+1. If receiver has chat open, client emits markSeen for message.
+2. Server updates message seen=true and emits messageSeen.
+3. Client updates read indicators and unread counters.
 
----
+## 4. Backend - Detailed Code Explanation
 
-## 🛠️ Technology Architecture
+## 4.1 backend/server.js
+Responsibilities:
+- Initializes Express, MongoDB, and Socket.IO.
+- Mounts REST routes:
+  - /api/auth
+  - /api/users
+  - /api/groups
+  - /api/messages
+- Tracks online users through in-memory map.
+- Handles all major socket events.
 
-- **Frontend Environment**: React.js, Context API, CSS3 Glassmorphism UI
-- **Backend Infrastructure**: Node.js, Express.js
-- **Real-Time Node Routing**: Socket.IO
-- **Database & ODM Engine**: MongoDB, Mongoose
-- **File Handlers**: Base64 Blob Strings mapping via HTML5 Canvas
+Key socket events:
+- setUserId: register online socket, emit online list, auto-join user groups.
+- joinRoom: join 1-to-1 deterministic room.
+- joinGroup: join group room.
+- sendChatRequest: notify recipient in real-time.
+- chatRequestAccepted: notify original requester in real-time.
+- sendMessage: validate + persist + broadcast message.
+- markSeen / markAllSeen: read receipt propagation.
+- editMessage: update message content + isEdited flag.
+- deleteMessage: delete for everyone OR soft-delete for one user.
+- clearChat: clear room for everyone OR hide for one user.
+- typing / stopTyping: typing indicators.
+- disconnect: remove from online map and emit offline event.
 
----
+## 4.2 backend/routes/auth.js
+Endpoints:
+- POST /register
+  - Validates required fields.
+  - Hashes password with bcrypt.
+  - Creates user and returns JWT + user.
+- POST /login
+  - Validates required fields.
+  - Checks user by email and bcrypt password comparison.
+  - Returns JWT + user.
 
-## ⚙️ Installation & Setup
+## 4.3 backend/routes/users.js
+Endpoints and behavior:
+- GET /api/users
+  - Returns all users excluding password.
+- GET /api/users/:id/suggestions
+  - Returns users excluding self and already-followed users.
+- PUT /api/users/:id/avatar
+  - Updates profile avatar.
+- PUT /api/users/:id/follow/:targetId
+  - Adds following and target follower.
+  - Adds chatRequests entry to target.
+- PUT /api/users/:id/unfollow/:targetId
+  - Removes following/follower link.
+- PUT /api/users/:id/request-chat/:targetId
+  - Sends standalone request if not blocked.
+- PUT /api/users/:id/accept-chat/:requesterId
+  - Removes request and adds both users to acceptedChats.
+- PUT /api/users/:id/decline-chat/:requesterId
+  - Removes pending request only.
+- PUT /api/users/:id/block/:targetId
+  - Adds blocked user and removes social/chat links both directions.
+- PUT /api/users/:id/profile
+  - Updates displayName and bio.
+- GET /api/users/:id/blocked
+  - Returns populated blocked users.
+- PUT /api/users/:id/unblock/:targetId
+  - Removes user from blocked list.
 
-1. **Clone & Target Directories**
-Ensure you natively exist within the correct workspace path containing `/frontend` and `/backend`.
+## 4.4 backend/routes/groups.js
+- POST /api/groups
+  - Creates group with name, members, admin.
+- GET /api/groups/:userId
+  - Returns groups where user is a member.
+- PUT /api/groups/:groupId/avatar
+  - Updates group avatar.
+- PUT /api/groups/:groupId/name
+  - Updates group name.
 
-2. **Install Backend Dependencies**
-```bash
-cd backend
-npm install
-```
+## 4.5 backend/routes/messages.js
+- GET /api/messages/:userId/:otherId
+  - For DM: uses deterministic room ID.
+  - For group: uses group ID room when isGroup=true.
+  - Excludes messages hidden by deletedBy for current user.
+  - Populates replyTo minimal fields.
+- POST /api/messages/seen
+  - Marks all incoming unseen messages in room as seen.
+- GET /api/messages/unread/:userId
+  - Aggregates unseen message counts by sender.
 
-3. **Install Frontend Dependencies**
-```bash
-cd frontend
-npm install
-```
+## 4.6 Data Models
 
-4. **Environment Variables Configs**
-Inside your `./backend` workspace natively create a `.env` file explicitly linking your MongoDB database:
-```env
-MONGO_URI=mongodb+srv://<USERNAME>:<PASSWORD>@<YOUR_CLUSTER>.mongodb.net/?retryWrites=true&w=majority
-JWT_SECRET=super_secret_jwt_string_or_salt
-PORT=5000
-```
+### backend/models/User.js
+Fields:
+- username, email unique
+- password
+- avatar, displayName, bio
+- following, followers, blocked
+- chatRequests, acceptedChats
 
-5. **Start Development Servers concurrently**
-Inside Terminal A:
-```bash
-cd backend
-node server.js 
-# standard localhost:5000 running backend APIs and Socket.IO bindings
-```
+### backend/models/Group.js
+Fields:
+- name, avatar
+- members[]
+- admin
 
-Inside Terminal B:
-```bash
-cd frontend
-npm start
-# normally localhost:3000 mapped natively tracking React scripts
-```
+### backend/models/Message.js
+Fields:
+- room, from, to, message
+- media { data, type, name }
+- replyTo reference
+- isGroup, seen, deletedBy[], isEdited
+- Compound index on room + createdAt for history reads
 
----
+## 5. Frontend - Detailed Code Explanation
 
-## 📂 Core Folder Structure & Code Explanations
+## 5.1 frontend/src/App.js
+- Defines two routes:
+  - / => Auth screen
+  - /chat => Chat screen
 
-- **[Detailed Code Breakdown Guide](./CODE_EXPLANATION.md)**: **CLICK HERE** for an exhaustive, line-by-line breakdown specifically isolating and explaining exactly what the engine code structurally accomplishes under the hood.
+## 5.2 frontend/src/components/Auth.js
+- Handles login/register form state.
+- Performs client-side required-field checks.
+- Calls backend auth endpoints.
+- Stores user in localStorage on success.
+- Redirects to /chat.
 
-- `backend/models/`: MongoDB Schema architecture definitions formatting `User.js`, `Message.js`, and `Group.js` metadata structures.
-- `backend/routes/`: Express modular route logic scaling payload handlers natively targeting users, messages, auth, and group configurations.
-- `backend/server.js`: The central core file mapping HTTP Express configs aggressively wrapping the global Socket.IO connectivity logic mapping IDs and emission states.
-- `frontend/src/components/Auth.js`: Secure Registration and Login interface integrating smooth Glassmorphism CSS transitions.
-- `frontend/src/components/Chat.js`: The hyper-massive engine component strictly configuring all visual UI mappings binding explicitly React Effects concurrently to WebSockets and media structures natively mapping out your entire active App display.
+## 5.3 frontend/src/components/Chat.js
+Main responsibilities:
+- Initializes full chat UI state and social state.
+- Loads users, groups, requests, unread counts.
+- Manages socket listeners and cleanup.
+- Handles chat opening and history fetch/decrypt.
+- Handles send/edit/delete/clear actions.
+- Handles social actions (follow/request/accept/decline/block/unblock).
+- Handles avatar upload, profile modal, and discover tab.
+
+Important implementation points:
+- Deterministic room function for DM room consistency.
+- Optimistic message append before server confirmation.
+- Incoming message deduplication by _id and optimistic match.
+- Decrypt on receive, decrypt on history load, decrypt on edit update.
+- Typing indicator with timeout cleanup.
+
+## 5.4 frontend/src/utils/encryption.js
+Utility functions available:
+- generateSharedEncryptionKey(roomId)
+- generateEncryptionKey(userId) (legacy compatibility helper)
+- encryptMessage(message, key)
+- decryptMessage(cipher, key)
+- encryptMessages(array, key)
+- decryptMessages(array, key)
+- isValidEncryptionKey(key)
+
+Note:
+- Chat.js currently computes ENCRYPTION_KEY directly from SECRET_SALT.
+- Encryption utility remains reusable for future per-room key migration.
+
+## 6. API Reference (Quick)
+
+Auth:
+- POST /api/auth/register
+- POST /api/auth/login
+
+Users:
+- GET /api/users
+- GET /api/users/:id/suggestions
+- PUT /api/users/:id/avatar
+- PUT /api/users/:id/follow/:targetId
+- PUT /api/users/:id/unfollow/:targetId
+- PUT /api/users/:id/request-chat/:targetId
+- PUT /api/users/:id/accept-chat/:requesterId
+- PUT /api/users/:id/decline-chat/:requesterId
+- PUT /api/users/:id/block/:targetId
+- PUT /api/users/:id/unblock/:targetId
+- PUT /api/users/:id/profile
+- GET /api/users/:id/blocked
+
+Groups:
+- POST /api/groups
+- GET /api/groups/:userId
+- PUT /api/groups/:groupId/avatar
+- PUT /api/groups/:groupId/name
+
+Messages:
+- GET /api/messages/:userId/:otherId?isGroup=true|false
+- POST /api/messages/seen
+- GET /api/messages/unread/:userId
+
+## 7. Socket Event Reference
+
+Client -> Server:
+- setUserId
+- joinRoom
+- joinGroup
+- sendChatRequest
+- chatRequestAccepted
+- sendMessage
+- markSeen
+- markAllSeen
+- editMessage
+- deleteMessage
+- clearChat
+- typing
+- stopTyping
+
+Server -> Client:
+- userOnline
+- userOffline
+- onlineList
+- chatRequestReceived
+- chatAccepted
+- errorMessage
+- receiveMessage
+- backgroundMessage
+- messageSeen
+- allMessagesSeen
+- messageEdited
+- messageDeleted
+- chatCleared
+- typing
+- stopTyping
+
+## 8. Encryption Validation Checklist
+
+To verify encryption and receiver decryption are working:
+1. Start backend and frontend.
+2. Login from two users.
+3. Send message A -> B.
+4. Confirm network/websocket payload contains encrypted string (starts like U2FsdGVkX1...).
+5. Confirm User B chat UI shows original readable text, not ciphertext.
+6. Refresh User B and reopen chat; history still decrypts correctly.
+
+## 9. Setup and Run
+
+Prerequisites:
+- Node.js installed
+- MongoDB URI
+
+Install:
+1. backend folder: npm install
+2. frontend folder: npm install
+
+Environment file backend/.env:
+- MONGO_URI=your_mongodb_uri
+- JWT_SECRET=your_jwt_secret
+- PORT=5000
+
+Run:
+1. backend: node server.js
+2. frontend: npm start
+
+## 10. Known Limitations and Next Improvements
+
+Current limitations:
+- Shared static key in frontend is functional but not strongest cryptographic model.
+- Key rotation is not implemented.
+- True per-conversation secure key exchange (RSA/ECDH) not yet implemented.
+
+Recommended roadmap:
+1. Move to per-conversation keys.
+2. Add secure key exchange between peers.
+3. Add key rotation and forward secrecy.
+4. Add robust message signature verification.
+
+## 11. Conclusion
+
+The project is currently working with:
+- Real-time messaging
+- Social-gated DM access
+- Presence/read receipts/typing
+- Media and profile/group enhancements
+- Client-side AES encryption with correct receiver decryption
+
+This documentation reflects the current source code behavior and the latest encryption/decryption fix.

@@ -38,4 +38,17 @@ router.put('/:groupId/avatar', async (req, res) => {
   }
 });
 
+// Update group name
+router.put('/:groupId/name', async (req, res) => {
+  try {
+    const { name } = req.body;
+    const group = await Group.findByIdAndUpdate(req.params.groupId, { name }, { new: true })
+      .populate('members', 'username avatar');
+    return res.json(group);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update group name' });
+  }
+});
+
 module.exports = router;

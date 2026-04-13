@@ -45,6 +45,7 @@ This is the massive main dining hall where all the magic, texting, and image sha
 - **`const [messages, setMessages] = useState([])`**: A massive list keeping track of every single chat bubble currently drawn on your screen.
 - **`useEffect(...)`**: A built-in React robot that automatically runs tasks in the background when the page loads. It connects your personal walkie-talkie (WebSocket) to the server.
 - **`socket.on("receiveMessage", ...)`**: Your walkie-talkie listening. When a friend sends a message, your walkie-talkie crackles, receives the text, and instantly draws a new chat bubble on your screen without you having to refresh the page.
+- **`CryptoJS.AES.encrypt(...)` (Security Vault)**: Before handing your message to the manager, the frontend locks it with AES encryption. The filing cabinet stores encrypted strings only. When your friend receives the message, the frontend decrypts it back to readable text using the same shared deterministic key used by sender and receiver.
 - **`compressImage(file)` function**: If you try to send a giant 10-Megabyte photo, this function secretly shrinks it down to a tiny size in the background so it sends instantly without crashing the network.
 - **`if (timeStr !== prevTimeStr)`**: A smart design feature. If you send 5 messages in the exact same minute, it only prints "10:05 AM" once at the top, instead of printing it 5 times which would look messy (just like Instagram).
 
@@ -58,7 +59,9 @@ This is the restaurant manager. It listens for requests, connects the walkie-tal
 - **`mongoose.connect(...)`**: The manager unlocks the giant filing cabinet (MongoDB) so we can save data safely in the cloud.
 - **`const io = new Server(server...)`**: The manager hands out the walkie-talkies (WebSockets) to every user who joins the website.
 - **`socket.on("joinRoom", ...)`**: When you click on a friend's name, the manager creates a secret, soundproof room just for the two of you. Any messages sent in this room cannot be heard by anyone else.
-- **`socket.on("sendMessage", ...)`**: The manager hears you speak into the walkie-talkie. They grab the message, write a permanent copy into the filing cabinet (MongoDB), and instantly echo it into your friend's walkie-talkie so they see it.
+- **`socket.on("sendMessage", ...)`**: The manager hears you speak into the walkie-talkie. They receive encrypted message payload, write it into MongoDB, and instantly echo it into your friend's walkie-talkie so they see it after client-side decryption.
+- **`socket.on("editMessage", ...)` and `socket.on("deleteMessage", ...)`**: The manager's eraser and correction pen. It allows users to retroactively reach into the filing cabinet to edit or destroy old messages.
+- **Unblocking Users**: If you've previously blocked someone, you can use the **Unblock** button in your Profile or the Explore tab. The manager hears this, finds that person in the "Blocked" folder of the filing cabinet, and tears up the block record, allowing you to follow or chat with them again.
 
 ---
 
@@ -122,7 +125,7 @@ To truly understand how everything connects, let's trace *exactly* what happens 
 
 **2. The Manager Catches It (`backend/server.js`)**
 - The server manager is constantly listening. It hears the `sendMessage` alert through the **`socket.on("sendMessage", async (data) => { ... })`** function.
-- It immediately grabs the raw text ("Hello") and talks to the Database Model (**`Message.create()`**). A brand new, permanent, timestamped record of this message is safely locked into the MongoDB filing cabinet so it will never be lost.
+- It immediately receives encrypted text (ciphertext), then talks to the Database Model (**`Message.create()`**). A brand new, permanent, timestamped encrypted record of this message is safely locked into MongoDB.
 
 **3. Blasting the Walkie-Talkie (`backend/server.js`)**
 - Once the text is securely saved in the database, the server manager looks at the unique, soundproof room you share with your friend.

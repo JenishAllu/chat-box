@@ -16,7 +16,7 @@ router.get('/:userId/:otherId', async (req, res) => {
     } else {
       room = getRoom(req.params.userId, req.params.otherId);
     }
-    const msgs = await Message.find({ room })
+    const msgs = await Message.find({ room, deletedBy: { $ne: req.params.userId } })
       .sort('createdAt')
       .populate('replyTo', 'message media from _id')
       .lean();

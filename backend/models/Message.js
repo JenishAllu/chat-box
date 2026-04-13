@@ -12,7 +12,9 @@ const messageSchema = new mongoose.Schema({
   },
   replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
   isGroup: { type: Boolean, default: false },
-  seen: { type: Boolean, default: false }
+  seen: { type: Boolean, default: false },
+  deletedBy: [{ type: String }],
+  isEdited: { type: Boolean, default: false }
 }, { timestamps: true });
 
 messageSchema.index({ room: 1, createdAt: 1 });

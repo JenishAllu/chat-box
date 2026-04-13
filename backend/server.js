@@ -77,9 +77,56 @@ io.on("connection", (socket) => {
     if (groupId) socket.join(groupId);
   });
 
+  // Emit a real-time chat request notification
+  socket.on("sendChatRequest", async ({ from, to }) => {
+    try {
+      const User = require("./models/User");
+      const sender = await User.findById(from).select('_id username avatar');
+      const recipientSocketId = onlineUsers[to];
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit("chatRequestReceived", { from: sender });
+      }
+    } catch (err) {
+      console.error("Socket error on sendChatRequest", err);
+    }
+  });
+
+  // Emit real-time notification when a chat request is accepted
+  socket.on("chatRequestAccepted", async ({ from, to }) => {
+    try {
+      const User = require("./models/User");
+      const accepter = await User.findById(from).select('_id username avatar');
+      const recipientSocketId = onlineUsers[to];
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit("chatAccepted", { by: accepter });
+      }
+    } catch (err) {
+      console.error("Socket error on chatRequestAccepted", err);
+    }
+  });
+
   socket.on("sendMessage", async (data) => {
     try {
       const { from, to, message, media, replyTo, isGroup } = data;
+
+      if (!isGroup) {
+        const User = require("./models/User");
+        const recipient = await User.findById(to);
+        const sender = await User.findById(from);
+        if (recipient && recipient.blocked && recipient.blocked.includes(from)) {
+          return socket.emit("errorMessage", { error: "Message not delivered" });
+        }
+        if (sender && sender.blocked && sender.blocked.includes(to)) {
+          return socket.emit("errorMessage", { error: "You blocked this user." });
+        }
+        // Gate DMs: both must have accepted each other
+        const senderAccepted = sender && sender.acceptedChats && sender.acceptedChats.map(String).includes(String(to));
+        const recipientAccepted = recipient && recipient.acceptedChats && recipient.acceptedChats.map(String).includes(String(from));
+        if (!senderAccepted || !recipientAccepted) {
+          return socket.emit("errorMessage", { error: "Chat not accepted yet. Send a chat request first." });
+        }
+      }
+
       const room = isGroup ? to : getRoom(from, to);
       const msgData = { room, from, to, message, seen: false, isGroup: isGroup || false };
       if (media) {
@@ -121,6 +168,51 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("editMessage", async ({ id, newText }) => {
+    try {
+      if (!id || !newText) return;
+      const updatedMsg = await Message.findByIdAndUpdate(id, { message: newText, isEdited: true }, { new: true });
+      if (updatedMsg) {
+        io.to(updatedMsg.room).emit("messageEdited", updatedMsg);
+      }
+    } catch (err) {
+      console.error("Socket error on editMessage", err);
+    }
+  });
+
+  socket.on("deleteMessage", async ({ id, type, userId }) => {
+    try {
+      if (!id || !userId) return;
+      if (type === 'everyone') {
+        const deletedMsg = await Message.findByIdAndDelete(id);
+        if (deletedMsg) {
+          io.to(deletedMsg.room).emit("messageDeleted", { id, room: deletedMsg.room, type: 'everyone' });
+        }
+      } else {
+        const updatedMsg = await Message.findByIdAndUpdate(id, { $addToSet: { deletedBy: userId } }, { new: true });
+        if (updatedMsg) {
+          io.to(updatedMsg.room).emit("messageDeleted", { id, room: updatedMsg.room, type: 'me', userId });
+        }
+      }
+    } catch (err) {
+      console.error("Socket error on deleteMessage", err);
+    }
+  });
+
+  socket.on("clearChat", async ({ room, type, userId }) => {
+    try {
+      if (!room || !userId) return;
+      if (type === 'everyone') {
+        await Message.deleteMany({ room });
+        io.to(room).emit("chatCleared", { room, type: 'everyone' });
+      } else {
+        await Message.updateMany({ room }, { $addToSet: { deletedBy: userId } });
+        io.to(room).emit("chatCleared", { room, type: 'me', userId });
+      }
+    } catch (err) {
+      console.error("Socket error on clearChat", err);
+    }
+  });
   socket.on("markAllSeen", ({ userId, otherUserId }) => {
     const room = getRoom(userId, otherUserId);
     // emit to everyone else in the room (the sender whose messages were just seen)
