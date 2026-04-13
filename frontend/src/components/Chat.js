@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 import { useNavigate } from "react-router-dom";
@@ -7,13 +7,17 @@ import CryptoJS from "crypto-js";
 import { encryptMessage, decryptMessage, decryptMessages } from "../utils/encryption";
 import "./Chat.css";
 
+const API_BASE = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || API_BASE;
+
 // ─── End-to-End Encryption Setup ──────────────────────────────────────────
 // Shared encryption key for all users - ensures both sender and receiver can decrypt
 // Messages are encrypted client-side before transmission and never stored plaintext on server
 const SECRET_SALT = 'INSTA_CHAT_SYSTEM_E2E_MESSAGE_ENCRYPTION_2024';
 const ENCRYPTION_KEY = CryptoJS.SHA256(SECRET_SALT).toString();
+const TYPING_EMIT_INTERVAL_MS = 300;
 
-const socket = io("http://localhost:5000");
+const socket = io(SOCKET_URL);
 
 function room(a, b) { return [a, b].sort().join("_"); }
 
@@ -30,6 +34,7 @@ function Chat() {
   const [groups, setGroups] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [chatRequests, setChatRequests] = useState([]); // full user objects of requesters
+  const [requestHistory, setRequestHistory] = useState([]);
   const [selected, setSelected] = useState(null);
   const [msg, setMsg] = useState("");
   const [messages, setMessages] = useState([]);
@@ -47,6 +52,7 @@ function Chat() {
   const [typingUser, setTypingUser] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const typingTimeoutRef = useRef(null);
+  const lastTypingEmitRef = useRef(0);
   const messagesEndRef = useRef(null);
   const mediaFileRef = useRef();
   const groupFileRef = useRef();
@@ -83,6 +89,24 @@ function Chat() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const followingSet = useMemo(() => new Set((localUser.following || []).map(String)), [localUser.following]);
+  const acceptedSet = useMemo(() => new Set((localUser.acceptedChats || []).map(String)), [localUser.acceptedChats]);
+  const blockedSet = useMemo(() => new Set((localUser.blocked || []).map(String)), [localUser.blocked]);
+  const usersById = useMemo(() => {
+    const map = {};
+    users.forEach(u => { map[String(u._id)] = u; });
+    return map;
+  }, [users]);
+
+  const visibleMessages = useMemo(() => {
+    if (!selected) return [];
+    if (selected.isGroup) {
+      return messages.filter(m => m.room === selected._id);
+    }
+    const targetRoom = room(user._id, selected._id);
+    return messages.filter(m => ((m.room && m.room === targetRoom) || room(m.from, m.to) === targetRoom));
+  }, [messages, selected, user._id]);
+
   // ─── Helpers ──────────────────────────────────────────────────────────────
   const formatTime = (dateStr) => {
     if (!dateStr) return '';
@@ -114,8 +138,8 @@ function Chat() {
   };
 
   // ─── Social helpers ───────────────────────────────────────────────────────
-  const isFollowing = (uId) => (localUser.following || []).map(String).includes(String(uId));
-  const isAccepted = (uId) => (localUser.acceptedChats || []).map(String).includes(String(uId));
+  const isFollowing = (uId) => followingSet.has(String(uId));
+  const isAccepted = (uId) => acceptedSet.has(String(uId));
   const hasPendingRequest = (uId) => {
     // check if target is in chatRequests of localUser (they sent us one)
     // or if we sent them one (they are in our following but not in acceptedChats)
@@ -125,7 +149,7 @@ function Chat() {
   // ─── Data loading ─────────────────────────────────────────────────────────
   const loadSuggestions = async () => {
     try {
-      const res = await axios.get(`http://localhost:5000/api/users/${localUser._id}/suggestions`);
+      const res = await axios.get(`${API_BASE}/api/users/${localUser._id}/suggestions`);
       setSuggestions(res.data);
     } catch (e) { console.error("failed to load suggestions", e); }
   };
@@ -136,24 +160,38 @@ function Chat() {
     const requestIds = me.chatRequests || [];
     if (requestIds.length === 0) { setChatRequests([]); return; }
     try {
-      const res = await axios.get("http://localhost:5000/api/users");
-      const requesters = res.data.filter(u => requestIds.map(String).includes(String(u._id)));
+      const res = await axios.get(`${API_BASE}/api/users`);
+      const requestSet = new Set(requestIds.map(String));
+      const requesters = res.data.filter(u => requestSet.has(String(u._id)));
       setChatRequests(requesters);
     } catch (e) { console.error("failed to load requests", e); }
   };
 
+  const loadRequestHistory = async (currentUser) => {
+    try {
+      const me = currentUser || localUser;
+      if (!me?._id) return;
+      const res = await axios.get(`${API_BASE}/api/users/${me._id}/request-history`);
+      setRequestHistory(Array.isArray(res.data) ? res.data : []);
+    } catch (e) {
+      console.error("failed to load request history", e);
+      setRequestHistory([]);
+    }
+  };
+
   useEffect(() => {
-    axios.get("http://localhost:5000/api/users")
+    axios.get(`${API_BASE}/api/users`)
       .then(res => setUsers(res.data.filter(u => u._id !== localUser._id)));
-    axios.get(`http://localhost:5000/api/groups/${localUser._id}`)
+    axios.get(`${API_BASE}/api/groups/${localUser._id}`)
       .then(res => setGroups(res.data.map(g => ({ ...g, isGroup: true, username: g.name }))))
       .catch(err => console.error("failed to load groups", err));
-    axios.get(`http://localhost:5000/api/messages/unread/${localUser._id}`)
+    axios.get(`${API_BASE}/api/messages/unread/${localUser._id}`)
       .then(res => setUnreadCounts(res.data))
       .catch(err => console.error("failed to load unread counts", err));
     socket.emit("setUserId", localUser._id);
     loadSuggestions();
     loadChatRequests();
+    loadRequestHistory();
   }, [localUser._id]);
 
   // ─── Socket: online / offline / typing ───────────────────────────────────
@@ -185,8 +223,13 @@ function Chat() {
       showToast(`📨 ${from.username} sent you a chat request!`, 'request');
       // Add to requests list if not already there
       setChatRequests(prev => prev.find(u => u._id === from._id) ? prev : [...prev, from]);
+      setRequestHistory(prev => {
+        const alreadyPending = prev.some(h => String(h?.from?._id || h?.from) === String(from._id) && h.status === 'pending');
+        if (alreadyPending) return prev;
+        return [{ from, status: 'pending', requestedAt: new Date().toISOString() }, ...prev];
+      });
       // Reload local user so chatRequests array is up-to-date
-      axios.get("http://localhost:5000/api/users")
+      axios.get(`${API_BASE}/api/users`)
         .then(res => {
           const me = res.data.find(u => u._id === localUser._id);
           if (me) { setLocalUser(me); localStorage.setItem('user', JSON.stringify(me)); }
@@ -196,7 +239,7 @@ function Chat() {
     socket.on("chatAccepted", ({ by }) => {
       showToast(`✅ ${by.username} accepted your chat request!`, 'success');
       // Reload local user so acceptedChats is up-to-date
-      axios.get("http://localhost:5000/api/users")
+      axios.get(`${API_BASE}/api/users`)
         .then(res => {
           const me = res.data.find(u => u._id === localUser._id);
           if (me) { setLocalUser(me); localStorage.setItem('user', JSON.stringify(me)); }
@@ -301,7 +344,7 @@ function Chat() {
     setUnreadCounts(prev => ({ ...prev, [u._id]: 0 }));
     try {
       const qs = u.isGroup ? '?isGroup=true' : '';
-      const res = await axios.get(`http://localhost:5000/api/messages/${user._id}/${u._id}${qs}`);
+      const res = await axios.get(`${API_BASE}/api/messages/${user._id}/${u._id}${qs}`);
       // Decrypt all messages with the shared encryption key
       setMessages(res.data.map(m => ({
         ...m,
@@ -312,7 +355,7 @@ function Chat() {
 
     if (!u.isGroup) {
       try {
-        await axios.post("http://localhost:5000/api/messages/seen", { userId: user._id, otherId: u._id });
+        await axios.post(`${API_BASE}/api/messages/seen`, { userId: user._id, otherId: u._id });
         setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
       } catch (e) { console.error("failed to mark seen", e); }
       socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
@@ -326,7 +369,7 @@ function Chat() {
   const toggleFollow = async (uId) => {
     const following = isFollowing(uId);
     try {
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/${following ? 'unfollow' : 'follow'}/${uId}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/${following ? 'unfollow' : 'follow'}/${uId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       if (!following) {
@@ -341,30 +384,32 @@ function Chat() {
 
   const acceptChatRequest = async (requesterId) => {
     try {
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/accept-chat/${requesterId}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/accept-chat/${requesterId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       // Emit real-time accepted event
       socket.emit("chatRequestAccepted", { from: localUser._id, to: requesterId });
       // Remove from requests
       setChatRequests(prev => prev.filter(u => u._id !== requesterId));
+      loadRequestHistory(res.data);
       showToast('✅ Chat request accepted!', 'success');
     } catch { showToast('Failed to accept request', 'error'); }
   };
 
   const declineChatRequest = async (requesterId) => {
     try {
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/decline-chat/${requesterId}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/decline-chat/${requesterId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       setChatRequests(prev => prev.filter(u => u._id !== requesterId));
+      loadRequestHistory(res.data);
       showToast('Request declined', 'info');
     } catch { showToast('Failed to decline request', 'error'); }
   };
 
   const sendChatRequest = async (targetUser) => {
     try {
-      await axios.put(`http://localhost:5000/api/users/${localUser._id}/request-chat/${targetUser._id}`);
+      await axios.put(`${API_BASE}/api/users/${localUser._id}/request-chat/${targetUser._id}`);
       socket.emit("sendChatRequest", { from: localUser._id, to: targetUser._id });
       showToast(`📨 Chat request sent to ${targetUser.username}!`, 'success');
       setShowRequestModal(null);
@@ -378,7 +423,7 @@ function Chat() {
   const blockUser = async (uId) => {
     if (!window.confirm("Are you sure you want to block this user?")) return;
     try {
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/block/${uId}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/block/${uId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       setSelected(null);
@@ -392,7 +437,7 @@ function Chat() {
       return;
     }
     try {
-      const res = await axios.post("http://localhost:5000/api/groups", {
+      const res = await axios.post(`${API_BASE}/api/groups`, {
         name: newGroupName,
         members: [...newGroupMembers, localUser._id],
         admin: localUser._id
@@ -409,7 +454,7 @@ function Chat() {
   const updateGroupName = async () => {
     if (!editGroupNameStr.trim() || !selected) return;
     try {
-      const res = await axios.put(`http://localhost:5000/api/groups/${selected._id}/name`, { name: editGroupNameStr });
+      const res = await axios.put(`${API_BASE}/api/groups/${selected._id}/name`, { name: editGroupNameStr });
       const updatedGroup = { ...res.data, isGroup: true, username: res.data.name };
       setGroups(prev => prev.map(g => g._id === updatedGroup._id ? updatedGroup : g));
       setSelected(updatedGroup);
@@ -423,7 +468,7 @@ function Chat() {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     try {
       const dataUrl = await compressImage(f);
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/avatar`, { avatar: dataUrl });
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/avatar`, { avatar: dataUrl });
       setLocalUser(res.data); localStorage.setItem('user', JSON.stringify(res.data));
     } catch (err) { console.error('avatar upload failed', err); }
     e.target.value = null;
@@ -434,7 +479,7 @@ function Chat() {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     try {
       const dataUrl = await compressImage(f);
-      const res = await axios.put(`http://localhost:5000/api/groups/${selected._id}/avatar`, { avatar: dataUrl });
+      const res = await axios.put(`${API_BASE}/api/groups/${selected._id}/avatar`, { avatar: dataUrl });
       const updatedGroup = { ...res.data, isGroup: true, username: res.data.name };
       setGroups(prev => prev.map(g => g._id === updatedGroup._id ? updatedGroup : g));
       setSelected(updatedGroup);
@@ -447,7 +492,7 @@ function Chat() {
   // ─── Profile helpers ─────────────────────────────────────────────────────
   const loadBlockedUsers = async () => {
     try {
-      const res = await axios.get(`http://localhost:5000/api/users/${localUser._id}/blocked`);
+      const res = await axios.get(`${API_BASE}/api/users/${localUser._id}/blocked`);
       setBlockedUsers(res.data);
     } catch (e) { console.error('failed to load blocked users', e); }
   };
@@ -472,7 +517,7 @@ function Chat() {
 
   const saveProfile = async () => {
     try {
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/profile`, profileDraft);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/profile`, profileDraft);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       setProfileEditMode(false);
@@ -482,7 +527,7 @@ function Chat() {
 
   const unblockUser = async (uId) => {
     try {
-      const res = await axios.put(`http://localhost:5000/api/users/${localUser._id}/unblock/${uId}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/unblock/${uId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       setBlockedUsers(prev => prev.filter(u => u._id !== uId));
@@ -542,7 +587,11 @@ function Chat() {
   const handleTyping = (e) => {
     setMsg(e.target.value);
     if (!selected) return;
-    socket.emit("typing", { from: user._id, to: selected._id });
+    const now = Date.now();
+    if (now - lastTypingEmitRef.current > TYPING_EMIT_INTERVAL_MS) {
+      socket.emit("typing", { from: user._id, to: selected._id });
+      lastTypingEmitRef.current = now;
+    }
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => socket.emit("stopTyping", { from: user._id, to: selected._id }), 2000);
   };
@@ -572,7 +621,7 @@ function Chat() {
   };
 
   // ─── Accepted chats (for Chats tab) ──────────────────────────────────────
-  const acceptedUserList = users.filter(u => isAccepted(u._id));
+  const acceptedUserList = useMemo(() => users.filter(u => isAccepted(u._id)), [users, acceptedSet]);
 
   // ─── Render: sidebar content per tab ─────────────────────────────────────
   const renderSidebarContent = () => {
@@ -634,8 +683,9 @@ function Chat() {
     if (sidebarTab === 'requests') {
       return (
         <div className="users-list">
+          <div className="request-section-title">Pending Requests</div>
           {chatRequests.length === 0 ? (
-            <div className="empty-tab">
+            <div className="empty-tab" style={{ marginBottom: '10px' }}>
               <div className="empty-icon">📨</div>
               <div>No pending requests</div>
             </div>
@@ -656,6 +706,32 @@ function Chat() {
               </div>
             </div>
           ))}
+
+          <div className="request-section-title" style={{ marginTop: '12px' }}>Request History</div>
+          {requestHistory.length === 0 ? (
+            <div className="empty-tab">
+              <div className="empty-icon">🕘</div>
+              <div>No request history yet</div>
+            </div>
+          ) : requestHistory.map((h, idx) => {
+            const from = h?.from || {};
+            const fromId = String(from?._id || h?.from || `hist-${idx}`);
+            const status = h?.status || 'pending';
+            return (
+              <div key={`${fromId}-${h?.requestedAt || idx}`} className="request-card history-card">
+                <div className="user-avatar">
+                  {from?.avatar ? <img src={from.avatar} alt="u" /> : (from?.username || 'U').slice(0, 1).toUpperCase()}
+                </div>
+                <div className="request-info">
+                  <div className="user-name">{from?.username || 'Unknown user'}</div>
+                  <div className="request-history-meta">
+                    <span className={`status-pill ${status}`}>{status}</span>
+                    <span className="history-time">{new Date(h?.respondedAt || h?.requestedAt || Date.now()).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       );
     }
@@ -688,7 +764,7 @@ function Chat() {
             ) : displayUsers.map(u => {
             const following = isFollowing(u._id);
             const pending = hasPendingRequest(u._id);
-            const blocked = (localUser.blocked || []).map(String).includes(String(u._id));
+            const blocked = blockedSet.has(String(u._id));
             return (
               <div key={u._id} className="discover-card">
                 <div className="user-avatar" onClick={() => openUserProfile(u)} style={{ cursor: 'pointer' }} title="View profile">
@@ -905,11 +981,7 @@ function Chat() {
             </div>
 
             <div className="messages">
-              {messages
-                .filter(m => selected.isGroup
-                  ? m.room === selected._id
-                  : ((m.room && m.room === room(user._id, selected._id)) || room(m.from, m.to) === room(user._id, selected._id))
-                )
+              {visibleMessages
                 .map((m, i, arr) => {
                   const timeStr = formatTime(m.createdAt || new Date());
                   let showName = false, showTime = false;
@@ -937,7 +1009,7 @@ function Chat() {
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: m.from === user._id ? 'flex-end' : 'flex-start', maxWidth: '75%' }}>
                         {showTime && (
                           <div style={{ fontSize: '11px', color: 'var(--muted)', marginLeft: m.from === user._id ? '0' : '12px', marginRight: m.from === user._id ? '12px' : '0', marginBottom: '4px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                            {showName && <span>{users.find(u => u._id === m.from)?.username || 'User'}</span>}
+                            {showName && <span>{usersById[String(m.from)]?.username || 'User'}</span>}
                             {showName && <span>•</span>}
                             <span>{timeStr}</span>
                           </div>
@@ -946,7 +1018,7 @@ function Chat() {
                           {m.replyTo && (
                             <div className="replied-snippet">
                               <div className="replied-from">
-                                {m.replyTo.from === user._id ? 'You' : (users.find(u => u._id === m.replyTo.from)?.username || selected?.username || 'User')}
+                                {m.replyTo.from === user._id ? 'You' : (usersById[String(m.replyTo.from)]?.username || selected?.username || 'User')}
                               </div>
                               <div className="replied-text">{m.replyTo.message ? m.replyTo.message : (m.replyTo.media ? 'Attachment' : '')}</div>
                             </div>

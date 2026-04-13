@@ -4,6 +4,8 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import "./Auth.css";
 
+const API_BASE = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
+
 function Auth() {
   const nav = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
@@ -20,7 +22,7 @@ function Auth() {
     setLoading(true);
     try {
       const url = isLogin ? "/login" : "/register";
-      const res = await axios.post("http://localhost:5000/api/auth" + url, form);
+      const res = await axios.post(`${API_BASE}/api/auth${url}`, form);
       localStorage.setItem("user", JSON.stringify(res.data.user));
       nav("/chat");
     } catch (err) {

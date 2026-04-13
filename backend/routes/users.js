@@ -2,6 +2,34 @@
 const router = require("express").Router();
 const User = require("../models/User");
 
+async function addRequestHistory(targetId, requesterId, status = 'pending') {
+  const target = await User.findById(targetId);
+  if (!target) return;
+  target.requestHistory = target.requestHistory || [];
+  target.requestHistory.push({
+    from: requesterId,
+    status,
+    requestedAt: new Date(),
+    respondedAt: status === 'pending' ? null : new Date(),
+  });
+  await target.save();
+}
+
+async function resolveLatestPendingHistory(targetId, requesterId, status) {
+  const target = await User.findById(targetId);
+  if (!target || !Array.isArray(target.requestHistory)) return;
+
+  for (let i = target.requestHistory.length - 1; i >= 0; i -= 1) {
+    const entry = target.requestHistory[i];
+    if (String(entry.from) === String(requesterId) && entry.status === 'pending') {
+      entry.status = status;
+      entry.respondedAt = new Date();
+      await target.save();
+      return;
+    }
+  }
+}
+
 // GET all users (excluding password)
 router.get("/", async (req, res) => {
   const users = await User.find().select("-password");
@@ -28,6 +56,26 @@ router.get("/:id/suggestions", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to get suggestions" });
+  }
+});
+
+// GET request history for a user
+router.get('/:id/request-history', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .populate('requestHistory.from', 'username avatar')
+      .select('requestHistory');
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const history = (user.requestHistory || [])
+      .slice()
+      .sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
+
+    res.json(history);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load request history' });
   }
 });
 
@@ -60,6 +108,8 @@ router.put('/:id/follow/:targetId', async (req, res) => {
     await User.findByIdAndUpdate(targetId, {
       $addToSet: { followers: id, chatRequests: id },
     });
+    await addRequestHistory(targetId, id, 'followed');
+    await addRequestHistory(targetId, id);
 
     res.json(user);
   } catch (err) {
@@ -78,6 +128,7 @@ router.put('/:id/unfollow/:targetId', async (req, res) => {
       { new: true }
     ).select('-password');
     await User.findByIdAndUpdate(targetId, { $pull: { followers: id } });
+    await addRequestHistory(targetId, id, 'unfollowed');
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: 'Failed' });
@@ -99,6 +150,7 @@ router.put('/:id/request-chat/:targetId', async (req, res) => {
 
     // Add request to target's chatRequests
     await User.findByIdAndUpdate(targetId, { $addToSet: { chatRequests: id } });
+    await addRequestHistory(targetId, id);
     const user = await User.findById(id).select('-password');
     res.json(user);
   } catch (err) {
@@ -125,6 +177,7 @@ router.put('/:id/accept-chat/:requesterId', async (req, res) => {
     await User.findByIdAndUpdate(requesterId, {
       $addToSet: { acceptedChats: id },
     });
+    await resolveLatestPendingHistory(id, requesterId, 'accepted');
 
     res.json(user);
   } catch (err) {
@@ -143,6 +196,7 @@ router.put('/:id/decline-chat/:requesterId', async (req, res) => {
       { $pull: { chatRequests: requesterId } },
       { new: true }
     ).select('-password');
+    await resolveLatestPendingHistory(id, requesterId, 'declined');
 
     res.json(user);
   } catch (err) {

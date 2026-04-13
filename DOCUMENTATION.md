@@ -333,7 +333,60 @@ Run:
 1. backend: node server.js
 2. frontend: npm start
 
-## 10. Known Limitations and Next Improvements
+## 10. Production Issue Fix (EC2 Login/Register)
+
+### Problem observed
+- App opened the login page on EC2.
+- Register and login API calls failed.
+
+### Root cause
+- Frontend had hardcoded backend URL values using localhost.
+- In browser context on EC2 deployment, localhost points to the browser host itself, not the remote backend service endpoint expected by users.
+
+### What was changed
+
+Updated frontend API and socket URLs to environment-aware values with safe fallback:
+
+1. Auth component update in frontend/src/components/Auth.js
+- Added API_BASE constant:
+  - process.env.REACT_APP_API_URL
+  - fallback to protocol + hostname + :5000
+- Replaced auth request URL with API_BASE.
+
+2. Chat component update in frontend/src/components/Chat.js
+- Added API_BASE constant using same fallback logic.
+- Added SOCKET_URL constant:
+  - process.env.REACT_APP_SOCKET_URL
+  - fallback to API_BASE
+- Replaced socket initialization to use SOCKET_URL.
+- Replaced all axios calls from hardcoded localhost to API_BASE.
+
+### Why this fix works
+- Frontend now targets your deployed backend host/IP instead of localhost.
+- Register and login endpoints are reachable in EC2/browser deployment.
+- Socket connection also points to the correct host.
+
+### Environment variables for deployment (recommended)
+
+Create frontend/.env (or set in your frontend runtime environment):
+- REACT_APP_API_URL=http://YOUR_EC2_PUBLIC_IP:5000
+- REACT_APP_SOCKET_URL=http://YOUR_EC2_PUBLIC_IP:5000
+
+### EC2 checklist
+1. Backend running on port 5000.
+2. Frontend running on port 3000 (or served build).
+3. EC2 Security Group allows inbound ports 3000 and 5000.
+4. Backend .env has valid MONGO_URI and JWT_SECRET.
+5. Restart frontend after changing REACT_APP_* variables.
+
+### Quick verification steps
+1. Open browser devtools network tab.
+2. Attempt register/login.
+3. Confirm request URL points to EC2 host:5000, not localhost:5000.
+4. Confirm response returns token and user.
+5. Confirm successful navigation to chat page.
+
+## 11. Known Limitations and Next Improvements
 
 Current limitations:
 - Shared static key in frontend is functional but not strongest cryptographic model.
@@ -346,7 +399,7 @@ Recommended roadmap:
 3. Add key rotation and forward secrecy.
 4. Add robust message signature verification.
 
-## 11. Conclusion
+## 12. Conclusion
 
 The project is currently working with:
 - Real-time messaging

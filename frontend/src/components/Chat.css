@@ -699,6 +699,69 @@ body {
   gap: 6px;
 }
 
+.request-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 8px 2px;
+}
+
+.history-card {
+  opacity: 0.95;
+}
+
+.request-history-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-pill {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.status-pill.pending {
+  color: #fcd34d;
+  background: rgba(252, 211, 77, 0.12);
+  border-color: rgba(252, 211, 77, 0.3);
+}
+
+.status-pill.accepted {
+  color: #6ee7b7;
+  background: rgba(110, 231, 183, 0.12);
+  border-color: rgba(110, 231, 183, 0.3);
+}
+
+.status-pill.declined {
+  color: #fca5a5;
+  background: rgba(252, 165, 165, 0.12);
+  border-color: rgba(252, 165, 165, 0.3);
+}
+
+.status-pill.followed {
+  color: #93c5fd;
+  background: rgba(147, 197, 253, 0.14);
+  border-color: rgba(147, 197, 253, 0.32);
+}
+
+.status-pill.unfollowed {
+  color: #fdba74;
+  background: rgba(253, 186, 116, 0.14);
+  border-color: rgba(253, 186, 116, 0.32);
+}
+
+.history-time {
+  font-size: 10px;
+  color: var(--muted);
+}
+
 .btn-accept {
   background: linear-gradient(90deg, #6ee7b7, #60a5fa);
   border: none;
