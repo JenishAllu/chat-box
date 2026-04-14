@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import "./Auth.css";
@@ -12,6 +12,20 @@ function Auth() {
   const [form, setForm] = useState({ username: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("user");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed._id) {
+        nav("/chat", { replace: true });
+      }
+    } catch {
+      // Ignore malformed localStorage data.
+    }
+  }, [nav]);
+
   const submit = async (e) => {
     if (e) e.preventDefault();
     setError("");
@@ -24,6 +38,9 @@ function Auth() {
       const url = isLogin ? "/login" : "/register";
       const res = await axios.post(`${API_BASE}/api/auth${url}`, form);
       localStorage.setItem("user", JSON.stringify(res.data.user));
+      if (res.data.token) {
+        localStorage.setItem("token", res.data.token);
+      }
       nav("/chat");
     } catch (err) {
       console.error('auth error', err);

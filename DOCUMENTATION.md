@@ -28,6 +28,38 @@ Core capabilities:
 
 ## 2. Important Changes Implemented
 
+### 2.0 Recent UI Improvements (April 2026)
+- Added persistent session-aware route behavior:
+  - Logged-in users are redirected directly to chat.
+  - Refreshing chat no longer drops to Not Found/login unexpectedly.
+  - Users stay signed in until Logout is clicked.
+- Improved chat media reliability:
+  - Message media source handling now supports both full data-URL and raw base64 storage formats.
+  - Chat images open in full-screen viewer when clicked.
+- Added group header interaction parity with direct chats:
+  - Clicking group name in the chat top bar opens a Group Details modal.
+  - Group details modal shows group icon, member count, and full member list.
+  - Tapping a member row opens that member profile directly.
+- Added group admin control panel in Group Details:
+  - Only current group admin can add more people.
+  - Admin can remove non-admin members.
+  - Admin can transfer admin role to another existing member.
+  - Add-members panel is collapsible behind a + Add action.
+  - Add flow is searchable and grouped as Following first, Suggestions next.
+  - Newly added users are added as members by default; admin transfer is separate.
+
+### 2.0.2 Mobile Responsiveness
+- Added responsive layout breakpoints for tablet and phone widths.
+- Chat layout now adapts to stacked sidebar + chat sections on smaller screens.
+- Message bubbles, media previews, tabs, modals, and toasts are scaled for mobile usability.
+- Added viewport meta tag in frontend/public/index.html for proper mobile scaling.
+
+### 2.0.1 Group Creation/Admin Rules
+- Group creator is always set as default admin at backend creation time.
+- Backend now enforces creator inclusion in members list automatically.
+- Client no longer relies on a mutable admin payload while creating groups.
+- Group management endpoints support compatibility aliases for add/remove/admin actions to avoid 404 issues during mixed client/server versions.
+
 ### 2.1 Social and Access-Control Changes
 - Added follow/follower model fields.
 - Added chat request workflow:
@@ -151,13 +183,23 @@ Endpoints and behavior:
 
 ## 4.4 backend/routes/groups.js
 - POST /api/groups
-  - Creates group with name, members, admin.
+  - Creates group with name, members, creatorId.
+  - Creator is automatically set as default admin.
 - GET /api/groups/:userId
   - Returns groups where user is a member.
 - PUT /api/groups/:groupId/avatar
   - Updates group avatar.
 - PUT /api/groups/:groupId/name
   - Updates group name.
+- PUT/POST /api/groups/:groupId/members/add
+- PUT/POST /api/groups/:groupId/members
+- PUT/POST /api/groups/:groupId/add-members
+- PUT/POST /api/groups/:groupId/member/add
+  - Adds one or more members (admin only).
+- PUT/POST /api/groups/:groupId/members/remove
+  - Removes member (admin only).
+- PUT/POST /api/groups/:groupId/admin
+  - Transfers admin role to another member (admin only).
 
 ## 4.5 backend/routes/messages.js
 - GET /api/messages/:userId/:otherId
@@ -264,6 +306,12 @@ Groups:
 - GET /api/groups/:userId
 - PUT /api/groups/:groupId/avatar
 - PUT /api/groups/:groupId/name
+- PUT/POST /api/groups/:groupId/members/add
+- PUT/POST /api/groups/:groupId/members
+- PUT/POST /api/groups/:groupId/add-members
+- PUT/POST /api/groups/:groupId/member/add
+- PUT/POST /api/groups/:groupId/members/remove
+- PUT/POST /api/groups/:groupId/admin
 
 Messages:
 - GET /api/messages/:userId/:otherId?isGroup=true|false

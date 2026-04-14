@@ -21,10 +21,31 @@ const socket = io(SOCKET_URL);
 
 function room(a, b) { return [a, b].sort().join("_"); }
 
+function getStoredUser() {
+  try {
+    const raw = localStorage.getItem("user");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed._id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function Chat() {
-  const user = JSON.parse(localStorage.getItem("user")) || {};
+  const user = getStoredUser() || {};
   const nav = useNavigate();
   const [localUser, setLocalUser] = useState(user || {});
+
+  useEffect(() => {
+    if (!localUser?._id) {
+      nav("/", { replace: true });
+      return;
+    }
+    if (!socket.connected) {
+      socket.connect();
+    }
+  }, [localUser?._id, nav]);
   
   const displayName = localUser?.displayName || localUser?.username || 'user1';
   const initials = displayName.split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase();
@@ -79,6 +100,10 @@ function Chat() {
   const [viewingUser, setViewingUser] = useState(null);
   const [profileEditMode, setProfileEditMode] = useState(false);
   const [profileDraft, setProfileDraft] = useState({ displayName: '', bio: '' });
+  const [showGroupDetailModal, setShowGroupDetailModal] = useState(false);
+  const [showGroupAddPanel, setShowGroupAddPanel] = useState(false);
+  const [groupAddMemberIds, setGroupAddMemberIds] = useState([]);
+  const [groupAddSearch, setGroupAddSearch] = useState('');
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [showBlockedSection, setShowBlockedSection] = useState(false);
 
@@ -98,6 +123,44 @@ function Chat() {
     return map;
   }, [users]);
 
+  const isSelectedGroupAdmin = useMemo(() => {
+    if (!selected?.isGroup || !localUser?._id) return false;
+    const adminId = selected?.admin?._id || selected?.admin;
+    return String(adminId) === String(localUser._id);
+  }, [selected, localUser?._id]);
+
+  const selectedGroupMemberIdSet = useMemo(() => {
+    if (!selected?.isGroup) return new Set();
+    return new Set((selected.members || []).map(m => String(m._id || m)));
+  }, [selected]);
+
+  const availableUsersToAdd = useMemo(() => {
+    if (!selected?.isGroup) return [];
+    return users.filter(u => !selectedGroupMemberIdSet.has(String(u._id)));
+  }, [users, selected, selectedGroupMemberIdSet]);
+
+  const filteredUsersToAdd = useMemo(() => {
+    const q = groupAddSearch.trim().toLowerCase();
+    if (!q) return availableUsersToAdd;
+    return availableUsersToAdd.filter(u => (u.username || '').toLowerCase().includes(q));
+  }, [availableUsersToAdd, groupAddSearch]);
+
+  const suggestionIdSet = useMemo(() => new Set((suggestions || []).map(u => String(u._id))), [suggestions]);
+
+  const followedUsersToAdd = useMemo(() => {
+    return filteredUsersToAdd.filter(u => followingSet.has(String(u._id)));
+  }, [filteredUsersToAdd, followingSet]);
+
+  const suggestedUsersToAdd = useMemo(() => {
+    return filteredUsersToAdd
+      .filter(u => !followingSet.has(String(u._id)))
+      .sort((a, b) => {
+        const aSuggested = suggestionIdSet.has(String(a._id)) ? 1 : 0;
+        const bSuggested = suggestionIdSet.has(String(b._id)) ? 1 : 0;
+        return bSuggested - aSuggested;
+      });
+  }, [filteredUsersToAdd, followingSet, suggestionIdSet]);
+
   const visibleMessages = useMemo(() => {
     if (!selected) return [];
     if (selected.isGroup) {
@@ -112,6 +175,15 @@ function Chat() {
     if (!dateStr) return '';
     const d = new Date(dateStr);
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const getMediaSrc = (media) => {
+    if (!media || !media.data) return '';
+    if (typeof media.data === 'string' && media.data.startsWith('data:')) {
+      return media.data;
+    }
+    const type = media.type || 'application/octet-stream';
+    return `data:${type};base64,${media.data}`;
   };
 
   const compressImage = (file) => {
@@ -440,7 +512,7 @@ function Chat() {
       const res = await axios.post(`${API_BASE}/api/groups`, {
         name: newGroupName,
         members: [...newGroupMembers, localUser._id],
-        admin: localUser._id
+        creatorId: localUser._id
       });
       const newGroup = { ...res.data, isGroup: true, username: res.data.name };
       setGroups(prev => [...prev, newGroup]);
@@ -460,6 +532,95 @@ function Chat() {
       setSelected(updatedGroup);
       setEditingGroupId(null);
     } catch { showToast('Failed to update group name', 'error'); }
+  };
+
+  const syncUpdatedGroup = (groupData) => {
+    if (!groupData) return;
+    const updatedGroup = { ...groupData, isGroup: true, username: groupData.name };
+    setGroups(prev => prev.map(g => g._id === updatedGroup._id ? updatedGroup : g));
+    setSelected(prev => (prev && prev._id === updatedGroup._id ? updatedGroup : prev));
+  };
+
+  const addMembersToGroup = async () => {
+    if (!selected?.isGroup || groupAddMemberIds.length === 0) return;
+    try {
+      const payload = { requesterId: localUser._id, memberIds: groupAddMemberIds };
+      const endpoints = [
+        { method: 'put', url: `${API_BASE}/api/groups/${selected._id}/members/add` },
+        { method: 'post', url: `${API_BASE}/api/groups/${selected._id}/members/add` },
+        { method: 'put', url: `${API_BASE}/api/groups/${selected._id}/members` },
+        { method: 'post', url: `${API_BASE}/api/groups/${selected._id}/members` },
+        { method: 'put', url: `${API_BASE}/api/groups/${selected._id}/add-members` },
+        { method: 'post', url: `${API_BASE}/api/groups/${selected._id}/add-members` },
+        { method: 'put', url: `${API_BASE}/api/groups/${selected._id}/member/add` },
+        { method: 'post', url: `${API_BASE}/api/groups/${selected._id}/member/add` }
+      ];
+
+      let res = null;
+      let lastErr = null;
+      for (const ep of endpoints) {
+        try {
+          res = await axios({ method: ep.method, url: ep.url, data: payload });
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (err?.response?.status && err.response.status !== 404) {
+            throw err;
+          }
+        }
+      }
+
+      if (!res) {
+        throw lastErr || new Error('All add-member endpoints returned 404');
+      }
+
+      syncUpdatedGroup(res.data);
+      setGroupAddMemberIds([]);
+      setGroupAddSearch('');
+      setShowGroupAddPanel(false);
+      showToast('Members added to group', 'success');
+    } catch (err) {
+      const serverError = err?.response?.data?.error || err?.response?.data?.msg;
+      showToast(serverError || `Failed to add members (${err?.response?.status || 'network'})`, 'error');
+    }
+  };
+
+  const toggleGroupAddMember = (memberId) => {
+    setGroupAddMemberIds(prev => {
+      const id = String(memberId);
+      if (prev.includes(id)) {
+        return prev.filter(v => v !== id);
+      }
+      return [...prev, id];
+    });
+  };
+
+  const removeGroupMember = async (memberId) => {
+    if (!selected?.isGroup) return;
+    try {
+      const res = await axios.put(`${API_BASE}/api/groups/${selected._id}/members/remove`, {
+        requesterId: localUser._id,
+        memberId
+      });
+      syncUpdatedGroup(res.data);
+      showToast('Member removed', 'info');
+    } catch (err) {
+      showToast(err?.response?.data?.error || 'Failed to remove member', 'error');
+    }
+  };
+
+  const makeGroupAdmin = async (memberId) => {
+    if (!selected?.isGroup) return;
+    try {
+      const res = await axios.put(`${API_BASE}/api/groups/${selected._id}/admin`, {
+        requesterId: localUser._id,
+        newAdminId: memberId
+      });
+      syncUpdatedGroup(res.data);
+      showToast('Admin role transferred', 'success');
+    } catch (err) {
+      showToast(err?.response?.data?.error || 'Failed to transfer admin', 'error');
+    }
   };
 
   // ─── Avatar ───────────────────────────────────────────────────────────────
@@ -507,12 +668,26 @@ function Chat() {
   };
 
   const openUserProfile = (u) => {
-    if (u._id === localUser._id) {
+    const normalizedUser = typeof u === 'string' ? usersById[String(u)] : u;
+    if (!normalizedUser?._id) {
+      showToast('User details not available yet', 'info');
+      return;
+    }
+    if (normalizedUser._id === localUser._id) {
       openProfileModal();
       return;
     }
-    setViewingUser(u);
+    setViewingUser(normalizedUser);
     setShowProfileModal(true);
+  };
+
+  const openGroupDetails = () => {
+    if (!selected?.isGroup) return;
+    loadSuggestions();
+    setShowGroupAddPanel(false);
+    setGroupAddMemberIds([]);
+    setGroupAddSearch('');
+    setShowGroupDetailModal(true);
   };
 
   const saveProfile = async () => {
@@ -617,7 +792,10 @@ function Chat() {
   }, [messages]);
 
   const logout = () => {
-    socket.disconnect(); localStorage.removeItem("user"); nav("/");
+    socket.disconnect();
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
+    nav("/", { replace: true });
   };
 
   // ─── Accepted chats (for Chats tab) ──────────────────────────────────────
@@ -915,10 +1093,10 @@ function Chat() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      cursor: selected.isGroup ? 'default' : 'pointer'
+                      cursor: 'pointer'
                     }}
-                    onClick={!selected.isGroup ? () => openUserProfile(selected) : undefined}
-                    title={!selected.isGroup ? 'View user details' : undefined}
+                    onClick={selected.isGroup ? openGroupDetails : () => openUserProfile(selected)}
+                    title={selected.isGroup ? 'View group details' : 'View user details'}
                   >
                     {selected.username || 'user1'}
                     {selected.isGroup && (
@@ -927,8 +1105,11 @@ function Chat() {
                   </div>
                 )}
                 {selected.isGroup && selected.members && (
-                  <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                    {selected.members.map(m => m.username).join(', ')}
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', cursor: 'pointer' }} onClick={openGroupDetails} title="View group details">
+                    {selected.members
+                      .filter(Boolean)
+                      .map(m => (typeof m === 'string' ? usersById[String(m)]?.username || 'User' : (m.username || 'User')))
+                      .join(', ')}
                   </div>
                 )}
                 {!selected.isGroup && (
@@ -1026,17 +1207,22 @@ function Chat() {
                           {m.media ? (
                             <div>
                               {m.media.type?.startsWith('image/') ? (
-                                <img src={`data:${m.media.type};base64,${m.media.data}`} alt="media" style={{ maxWidth: '300px', maxHeight: '400px', borderRadius: '8px' }} />
+                                <img
+                                  src={getMediaSrc(m.media)}
+                                  alt="media"
+                                  style={{ maxWidth: '300px', maxHeight: '400px', borderRadius: '8px', cursor: 'zoom-in' }}
+                                  onClick={() => setViewImageUrl(getMediaSrc(m.media))}
+                                />
                               ) : m.media.type?.startsWith('video/') ? (
                                 <video controls style={{ maxWidth: '300px', borderRadius: '8px' }}>
-                                  <source src={`data:${m.media.type};base64,${m.media.data}`} type={m.media.type} />
+                                  <source src={getMediaSrc(m.media)} type={m.media.type} />
                                 </video>
                               ) : m.media.type?.startsWith('audio/') ? (
                                 <audio controls style={{ maxWidth: '300px' }}>
-                                  <source src={`data:${m.media.type};base64,${m.media.data}`} type={m.media.type} />
+                                  <source src={getMediaSrc(m.media)} type={m.media.type} />
                                 </audio>
                               ) : (
-                                <a href={`data:${m.media.type};base64,${m.media.data}`} download={m.media.name} style={{ color: '#6ee7b7', textDecoration: 'underline' }}>📁 {m.media.name}</a>
+                                <a href={getMediaSrc(m.media)} download={m.media.name} style={{ color: '#6ee7b7', textDecoration: 'underline' }}>📁 {m.media.name}</a>
                               )}
                               {m.message && <div style={{ marginTop: '6px' }}>{m.message}</div>}
                             </div>
@@ -1476,6 +1662,181 @@ function Chat() {
           </div>
         );
       })()}
+
+      {/* ─── Group Detail Modal ─────────────────────────────────────────────────── */}
+      {showGroupDetailModal && selected?.isGroup && (
+        <div className="modal-overlay" onClick={() => setShowGroupDetailModal(false)}>
+          <div className="modal-content" style={{ maxWidth: '430px', maxHeight: '78vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <div
+                className="user-avatar"
+                style={{ width: '54px', height: '54px', borderRadius: '12px', cursor: 'pointer', flexShrink: 0 }}
+                onClick={() => selected.avatar && handleAvatarClick(selected.avatar)}
+                title="View group icon"
+              >
+                {selected.avatar ? <img src={selected.avatar} alt="group" style={{ borderRadius: '12px' }} /> : (selected.username || 'G').slice(0, 1).toUpperCase()}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '18px', fontWeight: 700 }}>{selected.username || 'Group'}</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{(selected.members || []).length} members</div>
+              </div>
+              <button
+                onClick={() => setShowGroupDetailModal(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--muted)', fontSize: '22px', cursor: 'pointer', lineHeight: 1 }}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '12px', fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+              Members
+            </div>
+
+            <div style={{ marginBottom: '10px', fontSize: '12px', color: 'var(--muted)' }}>
+              Admin: {usersById[String(selected?.admin?._id || selected?.admin)]?.username || selected?.admin?.username || 'Unknown'}
+            </div>
+
+            {isSelectedGroupAdmin && (
+              <div style={{ marginBottom: '14px', padding: '10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+                <button
+                  className="btn-follow"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px' }}
+                  onClick={() => setShowGroupAddPanel(v => !v)}
+                >
+                  <span style={{ fontSize: '15px', lineHeight: 1 }}>+</span>
+                  <span>{showGroupAddPanel ? 'Close Add Members' : 'Add Members'}</span>
+                </button>
+
+                {showGroupAddPanel && (
+                  <div style={{ marginTop: '10px' }}>
+                    {availableUsersToAdd.length === 0 ? (
+                      <div style={{ fontSize: '12px', color: 'var(--muted)' }}>No more users available to add.</div>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={groupAddSearch}
+                          onChange={e => setGroupAddSearch(e.target.value)}
+                          placeholder="Search users..."
+                          style={{ width: '100%', borderRadius: '8px', background: 'rgba(0,0,0,0.25)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', padding: '8px 10px', marginBottom: '8px' }}
+                        />
+
+                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.7px' }}>Following</div>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '6px', marginBottom: '10px' }}>
+                          {followedUsersToAdd.length === 0 ? (
+                            <div style={{ fontSize: '12px', color: 'var(--muted)', padding: '8px' }}>No followed users found.</div>
+                          ) : followedUsersToAdd.map(u => {
+                            const isChecked = groupAddMemberIds.includes(String(u._id));
+                            return (
+                              <label key={u._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '6px', cursor: 'pointer', background: isChecked ? 'rgba(110,231,183,0.08)' : 'transparent' }}>
+                                <input type="checkbox" checked={isChecked} onChange={() => toggleGroupAddMember(u._id)} />
+                                <span style={{ flex: 1, fontSize: '13px' }}>{u.username}</span>
+                                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{onlineUsers[u._id] ? 'Online' : 'Offline'}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.7px' }}>Suggestions</div>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '6px' }}>
+                          {suggestedUsersToAdd.length === 0 ? (
+                            <div style={{ fontSize: '12px', color: 'var(--muted)', padding: '8px' }}>No suggested users found.</div>
+                          ) : suggestedUsersToAdd.map(u => {
+                            const isChecked = groupAddMemberIds.includes(String(u._id));
+                            return (
+                              <label key={u._id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '6px', cursor: 'pointer', background: isChecked ? 'rgba(110,231,183,0.08)' : 'transparent' }}>
+                                <input type="checkbox" checked={isChecked} onChange={() => toggleGroupAddMember(u._id)} />
+                                <span style={{ flex: 1, fontSize: '13px' }}>{u.username}</span>
+                                <span style={{ fontSize: '11px', color: suggestionIdSet.has(String(u._id)) ? '#6ee7b7' : 'var(--muted)' }}>
+                                  {suggestionIdSet.has(String(u._id)) ? 'Suggested' : 'User'}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        {groupAddMemberIds.length > 0 && (
+                          <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--muted)' }}>Selected: {groupAddMemberIds.length}</div>
+                        )}
+
+                        <button
+                          className="btn-follow"
+                          style={{ marginTop: '10px', padding: '7px 14px' }}
+                          onClick={addMembersToGroup}
+                          disabled={groupAddMemberIds.length === 0}
+                        >
+                          Add Selected
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {(selected.members || []).filter(Boolean).map(member => {
+                const memberObj = typeof member === 'string' ? usersById[String(member)] : member;
+                const memberId = String(memberObj?._id || member);
+                const memberName = memberObj?.username || usersById[memberId]?.username || 'User';
+                const memberAvatar = memberObj?.avatar || usersById[memberId]?.avatar;
+                const isMe = memberId === String(localUser?._id);
+                const isMemberAdmin = memberId === String(selected?.admin?._id || selected?.admin);
+                return (
+                  <div
+                    key={memberId}
+                    className="follow-user-row"
+                    style={{ borderRadius: '10px', padding: '8px 10px', background: 'rgba(255,255,255,0.02)', cursor: 'pointer' }}
+                    onClick={() => {
+                      setShowGroupDetailModal(false);
+                      openUserProfile(memberObj || memberId);
+                    }}
+                  >
+                    <div className="user-avatar" style={{ flexShrink: 0 }}>
+                      {memberAvatar ? <img src={memberAvatar} alt="u" /> : memberName.slice(0, 1).toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {memberName} {isMe ? '(You)' : ''}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                        {isMemberAdmin ? 'Admin • ' : ''}{onlineUsers[memberId] ? 'Online' : 'Offline'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {isSelectedGroupAdmin && !isMemberAdmin && (
+                        <button
+                          className="btn-follow"
+                          style={{ padding: '4px 10px', fontSize: '11px', background: 'rgba(96,165,250,0.25)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            makeGroupAdmin(memberId);
+                          }}
+                        >
+                          Make Admin
+                        </button>
+                      )}
+                      {isSelectedGroupAdmin && !isMemberAdmin && (
+                        <button
+                          className="btn-follow btn-unfollow"
+                          style={{ padding: '4px 10px', fontSize: '11px' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeGroupMember(memberId);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
