@@ -50,15 +50,24 @@ Core capabilities:
 
 ### 2.0.2 Mobile Responsiveness
 - Added responsive layout breakpoints for tablet and phone widths.
-- Chat layout now adapts to stacked sidebar + chat sections on smaller screens.
+- Chat layout now uses single-pane mobile flow:
+  - Full-screen chat list view first.
+  - Full-screen chat view after opening a chat.
 - Message bubbles, media previews, tabs, modals, and toasts are scaled for mobile usability.
 - Added viewport meta tag in frontend/public/index.html for proper mobile scaling.
+- Added viewport-fit=cover and safe-area aware top spacing to avoid header clipping under browser/status bar.
+- Added mobile back integration with browser history:
+  - Back returns from chat view to list view first.
+  - Back from list follows normal browser/app history.
 
 ### 2.0.1 Group Creation/Admin Rules
 - Group creator is always set as default admin at backend creation time.
 - Backend now enforces creator inclusion in members list automatically.
 - Client no longer relies on a mutable admin payload while creating groups.
 - Group management endpoints support compatibility aliases for add/remove/admin actions to avoid 404 issues during mixed client/server versions.
+- Group now supports multiple admins:
+  - Admin role can be added to more members (not transfer-only).
+  - Existing groups with legacy single-admin field remain supported.
 
 ### 2.1 Social and Access-Control Changes
 - Added follow/follower model fields.

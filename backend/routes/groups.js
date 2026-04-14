@@ -5,7 +5,20 @@ const mongoose = require('mongoose');
 function populateGroup(query) {
   return query
     .populate('members', 'username avatar')
-    .populate('admin', 'username avatar');
+    .populate('admin', 'username avatar')
+    .populate('admins', 'username avatar');
+}
+
+function getAdminIds(group) {
+  const ids = Array.isArray(group.admins) && group.admins.length > 0
+    ? group.admins
+    : (group.admin ? [group.admin] : []);
+  return ids.map(id => String(id));
+}
+
+function isGroupAdmin(group, userId) {
+  if (!group || !userId) return false;
+  return getAdminIds(group).includes(String(userId));
 }
 
 // Create a new group
@@ -21,7 +34,8 @@ router.post('/', async (req, res) => {
     const newGroup = await Group.create({
       name,
       members: Array.from(memberSet),
-      admin: creatorId
+      admin: creatorId,
+      admins: [creatorId]
     });
     const populated = await newGroup.populate([
       { path: 'members', select: 'username avatar' },
@@ -79,7 +93,7 @@ const addMembersHandler = async (req, res) => {
 
     const group = await Group.findById(req.params.groupId);
     if (!group) return res.status(404).json({ error: 'Group not found' });
-    if (String(group.admin) !== String(requesterId)) {
+    if (!isGroupAdmin(group, requesterId)) {
       return res.status(403).json({ error: 'Only admin can add members' });
     }
 
@@ -121,11 +135,12 @@ const removeMembersHandler = async (req, res) => {
 
     const group = await Group.findById(req.params.groupId);
     if (!group) return res.status(404).json({ error: 'Group not found' });
-    if (String(group.admin) !== String(requesterId)) {
+    if (!isGroupAdmin(group, requesterId)) {
       return res.status(403).json({ error: 'Only admin can remove members' });
     }
-    if (String(memberId) === String(group.admin)) {
-      return res.status(400).json({ error: 'Admin cannot be removed. Transfer admin first.' });
+    const adminIds = getAdminIds(group);
+    if (adminIds.includes(String(memberId))) {
+      return res.status(400).json({ error: 'Admin cannot be removed. Remove admin role first.' });
     }
 
     group.members = (group.members || []).filter(id => String(id) !== String(memberId));
@@ -142,7 +157,7 @@ const removeMembersHandler = async (req, res) => {
 router.put('/:groupId/members/remove', removeMembersHandler);
 router.post('/:groupId/members/remove', removeMembersHandler);
 
-// Transfer admin role (admin only)
+// Add admin role (admin only)
 const transferAdminHandler = async (req, res) => {
   try {
     const { requesterId, newAdminId } = req.body;
@@ -152,8 +167,8 @@ const transferAdminHandler = async (req, res) => {
 
     const group = await Group.findById(req.params.groupId);
     if (!group) return res.status(404).json({ error: 'Group not found' });
-    if (String(group.admin) !== String(requesterId)) {
-      return res.status(403).json({ error: 'Only current admin can transfer admin role' });
+    if (!isGroupAdmin(group, requesterId)) {
+      return res.status(403).json({ error: 'Only admins can add admin role' });
     }
 
     const isMember = (group.members || []).some(id => String(id) === String(newAdminId));
@@ -161,14 +176,18 @@ const transferAdminHandler = async (req, res) => {
       return res.status(400).json({ error: 'New admin must be a group member' });
     }
 
-    group.admin = newAdminId;
+    const nextAdmins = new Set(getAdminIds(group));
+    nextAdmins.add(String(newAdminId));
+    group.admins = Array.from(nextAdmins);
+    // Keep legacy field aligned with a deterministic primary admin.
+    group.admin = group.admin || newAdminId;
     await group.save();
 
     const updated = await populateGroup(Group.findById(group._id));
     return res.json(updated);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to transfer admin' });
+    res.status(500).json({ error: 'Failed to add admin role' });
   }
 };
 

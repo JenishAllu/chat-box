@@ -21,6 +21,10 @@ const socket = io(SOCKET_URL);
 
 function room(a, b) { return [a, b].sort().join("_"); }
 
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 820px)').matches;
+}
+
 function getStoredUser() {
   try {
     const raw = localStorage.getItem("user");
@@ -123,11 +127,18 @@ function Chat() {
     return map;
   }, [users]);
 
+  const selectedGroupAdminIds = useMemo(() => {
+    if (!selected?.isGroup) return [];
+    if (Array.isArray(selected.admins) && selected.admins.length > 0) {
+      return selected.admins.map(a => String(a?._id || a));
+    }
+    return selected?.admin ? [String(selected.admin?._id || selected.admin)] : [];
+  }, [selected]);
+
   const isSelectedGroupAdmin = useMemo(() => {
     if (!selected?.isGroup || !localUser?._id) return false;
-    const adminId = selected?.admin?._id || selected?.admin;
-    return String(adminId) === String(localUser._id);
-  }, [selected, localUser?._id]);
+    return selectedGroupAdminIds.includes(String(localUser._id));
+  }, [selected, localUser?._id, selectedGroupAdminIds]);
 
   const selectedGroupMemberIdSet = useMemo(() => {
     if (!selected?.isGroup) return new Set();
@@ -339,6 +350,24 @@ function Chat() {
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { setOpenHeaderMenu(false); }, [selected?._id]);
 
+  useEffect(() => {
+    if (!isMobileViewport()) return;
+
+    if (!window.history.state || !window.history.state.instaChatView) {
+      window.history.replaceState({ ...(window.history.state || {}), instaChatView: 'list' }, '');
+    }
+
+    const onPopState = () => {
+      if (selectedRef.current) {
+        setSelected(null);
+        setReplyingTo(null);
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   // ─── Socket: messages ─────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (data) => {
@@ -410,6 +439,14 @@ function Chat() {
       setShowRequestModal(u);
       return;
     }
+
+    if (isMobileViewport()) {
+      window.history.pushState(
+        { ...(window.history.state || {}), instaChatView: 'chat', chatId: u._id },
+        ''
+      );
+    }
+
     setSelected(u);
     setMessages([]);
     setReplyingTo(null);
@@ -983,7 +1020,7 @@ function Chat() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="chat-root">
+    <div className={`chat-root ${selected ? 'mobile-chat-open' : ''}`}>
       {/* Toast */}
       {toast && (
         <div className={`toast toast-${toast.type}`}>{toast.msg}</div>
@@ -1066,6 +1103,19 @@ function Chat() {
         {selected ? (
           <>
             <div className="chat-top">
+              <button
+                className="mobile-back-btn"
+                onClick={() => {
+                  if (isMobileViewport()) {
+                    window.history.back();
+                  } else {
+                    setSelected(null);
+                  }
+                }}
+                title="Back to chats"
+              >
+                ←
+              </button>
               <div
                 className={`other-avatar ${selected.isGroup ? 'editable-avatar' : ''}`}
                 style={selected.isGroup ? { borderRadius: '8px', cursor: 'pointer' } : { cursor: 'pointer' }}
@@ -1694,7 +1744,9 @@ function Chat() {
             </div>
 
             <div style={{ marginBottom: '10px', fontSize: '12px', color: 'var(--muted)' }}>
-              Admin: {usersById[String(selected?.admin?._id || selected?.admin)]?.username || selected?.admin?.username || 'Unknown'}
+              Admins: {selectedGroupAdminIds.length > 0
+                ? selectedGroupAdminIds.map(id => usersById[String(id)]?.username || 'User').join(', ')
+                : 'Unknown'}
             </div>
 
             {isSelectedGroupAdmin && (
@@ -1782,7 +1834,7 @@ function Chat() {
                 const memberName = memberObj?.username || usersById[memberId]?.username || 'User';
                 const memberAvatar = memberObj?.avatar || usersById[memberId]?.avatar;
                 const isMe = memberId === String(localUser?._id);
-                const isMemberAdmin = memberId === String(selected?.admin?._id || selected?.admin);
+                const isMemberAdmin = selectedGroupAdminIds.includes(memberId);
                 return (
                   <div
                     key={memberId}
