@@ -130,12 +130,43 @@ io.on("connection", (socket) => {
         const senderAccepted = sender && sender.acceptedChats && sender.acceptedChats.map(String).includes(String(to));
         const recipientAccepted = recipient && recipient.acceptedChats && recipient.acceptedChats.map(String).includes(String(from));
         if (!senderAccepted || !recipientAccepted) {
-          return socket.emit("errorMessage", { error: "Chat not accepted yet. Send a chat request first." });
+          const pendingMsg = await Message.create({
+            room: getRoom(from, to),
+            from,
+            to,
+            message,
+            seen: false,
+            isGroup: false,
+            isRequest: true,
+            requestStatus: 'pending',
+            ...(media ? { media } : {}),
+            ...(replyTo ? { replyTo } : {}),
+          });
+
+          await User.findByIdAndUpdate(to, {
+            $addToSet: {
+              chatRequests: from,
+            },
+            $push: {
+              requestHistory: {
+                from,
+                status: 'pending',
+                requestedAt: new Date(),
+                respondedAt: null,
+              }
+            }
+          });
+
+          const recipientSocketId = onlineUsers[to];
+          if (recipientSocketId) {
+            io.to(recipientSocketId).emit("messageRequestReceived", { from: sender, message: pendingMsg });
+          }
+          return;
         }
       }
 
       const room = isGroup ? to : getRoom(from, to);
-      const msgData = { room, from, to, message, seen: false, isGroup: isGroup || false };
+      const msgData = { room, from, to, message, seen: false, isGroup: isGroup || false, requestStatus: 'accepted' };
       if (media) {
         msgData.media = media;
       }

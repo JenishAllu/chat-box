@@ -6,7 +6,7 @@ import "./Auth.css";
 
 const API_BASE = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
 
-function Auth() {
+function Auth({ onAuthSuccess }) {
   const nav = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [form, setForm] = useState({ username: "", email: "", password: "" });
@@ -41,7 +41,10 @@ function Auth() {
       if (res.data.token) {
         localStorage.setItem("token", res.data.token);
       }
-      nav("/chat");
+      if (onAuthSuccess) {
+        onAuthSuccess();
+      }
+      nav("/chat", { replace: true });
     } catch (err) {
       console.error('auth error', err);
       setError(err.response?.data?.msg || 'Authentication failed');

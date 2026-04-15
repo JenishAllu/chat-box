@@ -13,6 +13,8 @@ const messageSchema = new mongoose.Schema({
   replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
   isGroup: { type: Boolean, default: false },
   seen: { type: Boolean, default: false },
+  isRequest: { type: Boolean, default: false },
+  requestStatus: { type: String, enum: ['pending', 'accepted', 'declined'], default: 'accepted' },
   deletedBy: [{ type: String }],
   isEdited: { type: Boolean, default: false }
 }, { timestamps: true });

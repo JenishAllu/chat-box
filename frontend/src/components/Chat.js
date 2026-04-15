@@ -36,7 +36,7 @@ function getStoredUser() {
   }
 }
 
-function Chat() {
+function Chat({ onLogout }) {
   const user = getStoredUser() || {};
   const nav = useNavigate();
   const [localUser, setLocalUser] = useState(user || {});
@@ -59,6 +59,7 @@ function Chat() {
   const [groups, setGroups] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [chatRequests, setChatRequests] = useState([]); // full user objects of requesters
+  const [messageRequests, setMessageRequests] = useState([]);
   const [requestHistory, setRequestHistory] = useState([]);
   const [selected, setSelected] = useState(null);
   const [msg, setMsg] = useState("");
@@ -97,7 +98,7 @@ function Chat() {
 
   // ─── Following / Followers modal ──────────────────────────────────────────
   const [showFollowModal, setShowFollowModal] = useState(false);
-  const [followModalTab, setFollowModalTab] = useState('following'); // 'following' | 'followers'
+  const [followModalTab, setFollowModalTab] = useState('following'); // 'following' | 'followers' | 'pending'
 
   // ─── Profile modal ──────────────────────────────────────────────────────────
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -119,8 +120,16 @@ function Chat() {
   };
 
   const followingSet = useMemo(() => new Set((localUser.following || []).map(String)), [localUser.following]);
+  const pendingFollowingSet = useMemo(() => new Set((localUser.pendingFollowing || []).map(String)), [localUser.pendingFollowing]);
   const acceptedSet = useMemo(() => new Set((localUser.acceptedChats || []).map(String)), [localUser.acceptedChats]);
   const blockedSet = useMemo(() => new Set((localUser.blocked || []).map(String)), [localUser.blocked]);
+  const messageRequestSenderIdSet = useMemo(() => new Set((messageRequests || []).map(item => String(item?.from?._id || item?.from || ''))), [messageRequests]);
+  const requestBadgeCount = useMemo(() => {
+    return new Set([
+      ...chatRequests.map(u => String(u._id)),
+      ...messageRequests.map(item => String(item?.from?._id || item?.from || ''))
+    ]).size;
+  }, [chatRequests, messageRequests]);
   const usersById = useMemo(() => {
     const map = {};
     users.forEach(u => { map[String(u._id)] = u; });
@@ -223,11 +232,7 @@ function Chat() {
   // ─── Social helpers ───────────────────────────────────────────────────────
   const isFollowing = (uId) => followingSet.has(String(uId));
   const isAccepted = (uId) => acceptedSet.has(String(uId));
-  const hasPendingRequest = (uId) => {
-    // check if target is in chatRequests of localUser (they sent us one)
-    // or if we sent them one (they are in our following but not in acceptedChats)
-    return isFollowing(uId) && !isAccepted(uId);
-  };
+  const hasPendingRequest = (uId) => pendingFollowingSet.has(String(uId));
 
   // ─── Data loading ─────────────────────────────────────────────────────────
   const loadSuggestions = async () => {
@@ -248,6 +253,21 @@ function Chat() {
       const requesters = res.data.filter(u => requestSet.has(String(u._id)));
       setChatRequests(requesters);
     } catch (e) { console.error("failed to load requests", e); }
+  };
+
+  const loadMessageRequests = async (currentUser) => {
+    try {
+      const me = currentUser || localUser;
+      if (!me?._id) return;
+      const res = await axios.get(`${API_BASE}/api/messages/requests/${me._id}`);
+      setMessageRequests((Array.isArray(res.data) ? res.data : []).map(item => ({
+        ...item,
+        latestMessage: item.latestMessage ? decryptMessage(item.latestMessage, ENCRYPTION_KEY) : item.latestMessage,
+      })));
+    } catch (e) {
+      console.error("failed to load message requests", e);
+      setMessageRequests([]);
+    }
   };
 
   const loadRequestHistory = async (currentUser) => {
@@ -274,6 +294,7 @@ function Chat() {
     socket.emit("setUserId", localUser._id);
     loadSuggestions();
     loadChatRequests();
+    loadMessageRequests();
     loadRequestHistory();
   }, [localUser._id]);
 
@@ -319,6 +340,25 @@ function Chat() {
         });
     });
 
+    socket.on("messageRequestReceived", ({ from, message }) => {
+      showToast(`📩 Message request from ${from.username}`, 'request');
+      setMessageRequests(prev => {
+        const existing = prev.find(item => String(item?.from?._id) === String(from._id));
+        const nextEntry = {
+          from,
+          latestMessage: message?.message ? decryptMessage(message.message, ENCRYPTION_KEY) : '',
+          latestCreatedAt: message?.createdAt || new Date().toISOString(),
+          messageCount: existing ? (existing.messageCount + 1) : 1,
+          latestMedia: message?.media || null,
+        };
+        if (existing) {
+          return prev.map(item => String(item?.from?._id) === String(from._id) ? nextEntry : item);
+        }
+        return [nextEntry, ...prev];
+      });
+      setChatRequests(prev => prev.find(u => u._id === from._id) ? prev : [...prev, from]);
+    });
+
     socket.on("chatAccepted", ({ by }) => {
       showToast(`✅ ${by.username} accepted your chat request!`, 'success');
       // Reload local user so acceptedChats is up-to-date
@@ -340,6 +380,7 @@ function Chat() {
       socket.off("typing");
       socket.off("stopTyping");
       socket.off("chatRequestReceived");
+      socket.off("messageRequestReceived");
       socket.off("chatAccepted");
       socket.off("errorMessage");
       clearTimeout(typingTimeoutRef.current);
@@ -349,6 +390,27 @@ function Chat() {
   const selectedRef = useRef(selected);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { setOpenHeaderMenu(false); }, [selected?._id]);
+
+  useEffect(() => {
+    if (!openHeaderMenu && openMenuId == null) return;
+
+    const handleOutsideMenuClick = (event) => {
+      if (!(event.target instanceof Element)) return;
+
+      const clickedMessageMenu = event.target.closest('.message-options');
+      const clickedHeaderMenu = event.target.closest('.chat-header-menu');
+
+      if (!clickedMessageMenu) {
+        setOpenMenuId(null);
+      }
+      if (!clickedHeaderMenu) {
+        setOpenHeaderMenu(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handleOutsideMenuClick);
+    return () => document.removeEventListener('pointerdown', handleOutsideMenuClick);
+  }, [openHeaderMenu, openMenuId]);
 
   useEffect(() => {
     if (!isMobileViewport()) return;
@@ -477,16 +539,19 @@ function Chat() {
   // ─── Social actions ───────────────────────────────────────────────────────
   const toggleFollow = async (uId) => {
     const following = isFollowing(uId);
+    const pending = hasPendingRequest(uId);
     try {
-      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/${following ? 'unfollow' : 'follow'}/${uId}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/${(following || pending) ? 'unfollow' : 'follow'}/${uId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
-      if (!following) {
+      if (!following && !pending) {
         // Emit socket event so target gets live notification
         socket.emit("sendChatRequest", { from: localUser._id, to: uId });
-        showToast('✅ Follow request sent!', 'success');
+        showToast('✅ Follow request sent (pending approval)!', 'success');
         // Remove from suggestions
         setSuggestions(prev => prev.filter(u => u._id !== uId));
+      } else if (pending) {
+        showToast('Pending request cancelled', 'info');
       }
     } catch { showToast('Failed to update follow status', 'error'); }
   };
@@ -500,7 +565,9 @@ function Chat() {
       socket.emit("chatRequestAccepted", { from: localUser._id, to: requesterId });
       // Remove from requests
       setChatRequests(prev => prev.filter(u => u._id !== requesterId));
+      setMessageRequests(prev => prev.filter(item => String(item?.from?._id) !== String(requesterId)));
       loadRequestHistory(res.data);
+      loadMessageRequests(res.data);
       showToast('✅ Chat request accepted!', 'success');
     } catch { showToast('Failed to accept request', 'error'); }
   };
@@ -511,7 +578,9 @@ function Chat() {
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
       setChatRequests(prev => prev.filter(u => u._id !== requesterId));
+      setMessageRequests(prev => prev.filter(item => String(item?.from?._id) !== String(requesterId)));
       loadRequestHistory(res.data);
+      loadMessageRequests(res.data);
       showToast('Request declined', 'info');
     } catch { showToast('Failed to decline request', 'error'); }
   };
@@ -522,10 +591,6 @@ function Chat() {
       socket.emit("sendChatRequest", { from: localUser._id, to: targetUser._id });
       showToast(`📨 Chat request sent to ${targetUser.username}!`, 'success');
       setShowRequestModal(null);
-      // Also follow if not already
-      if (!isFollowing(targetUser._id)) {
-        await toggleFollow(targetUser._id);
-      }
     } catch { showToast('Failed to send request', 'error'); }
   };
 
@@ -830,8 +895,12 @@ function Chat() {
 
   const logout = () => {
     socket.disconnect();
-    localStorage.removeItem("user");
-    localStorage.removeItem("token");
+    if (onLogout) {
+      onLogout();
+    } else {
+      localStorage.removeItem("user");
+      localStorage.removeItem("token");
+    }
     nav("/", { replace: true });
   };
 
@@ -896,15 +965,43 @@ function Chat() {
     }
 
     if (sidebarTab === 'requests') {
+      const pendingRequestUsers = chatRequests.filter(u => !messageRequestSenderIdSet.has(String(u._id)));
+
       return (
         <div className="users-list">
+          <div className="request-section-title">Message Requests</div>
+          {messageRequests.length === 0 ? (
+            <div className="empty-tab" style={{ marginBottom: '10px' }}>
+              <div className="empty-icon">📩</div>
+              <div>No message requests</div>
+            </div>
+          ) : messageRequests.map((req, idx) => {
+            const from = req?.from || {};
+            const preview = req?.latestMedia ? (req.latestMedia.name || 'Attachment') : (req?.latestMessage || 'Message request');
+            return (
+              <div key={`${from?._id || idx}-${req?.latestCreatedAt || idx}`} className="request-card">
+                <div className="user-avatar">
+                  {from?.avatar ? <img src={from.avatar} alt="u" /> : (from?.username || 'U').slice(0, 1).toUpperCase()}
+                </div>
+                <div className="request-info">
+                  <div className="user-name">{from?.username || 'Unknown user'}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>{preview}</div>
+                  <div className="request-actions">
+                    <button className="btn-accept" onClick={() => acceptChatRequest(from._id)}>Accept</button>
+                    <button className="btn-decline" onClick={() => declineChatRequest(from._id)}>Decline</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
           <div className="request-section-title">Pending Requests</div>
-          {chatRequests.length === 0 ? (
+          {pendingRequestUsers.length === 0 ? (
             <div className="empty-tab" style={{ marginBottom: '10px' }}>
               <div className="empty-icon">📨</div>
               <div>No pending requests</div>
             </div>
-          ) : chatRequests.map(u => (
+          ) : pendingRequestUsers.map(u => (
             <div key={u._id} className="request-card">
               <div className="user-avatar">
                 {u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
@@ -914,7 +1011,7 @@ function Chat() {
                 <div className="request-actions">
                   <button className="btn-accept" onClick={() => acceptChatRequest(u._id)}>Accept</button>
                   <button className="btn-decline" onClick={() => declineChatRequest(u._id)}>Decline</button>
-                  {!isFollowing(u._id) && (
+                  {!isFollowing(u._id) && !hasPendingRequest(u._id) && (
                     <button className="btn-follow" onClick={() => toggleFollow(u._id)} style={{ padding: '4px 8px' }}>Follow Back</button>
                   )}
                 </div>
@@ -996,14 +1093,14 @@ function Chat() {
                   ) : (
                     <div className="discover-actions">
                       <button
-                        className={`btn-follow ${following ? 'btn-unfollow' : ''}`}
+                        className={`btn-follow ${following || pending ? 'btn-unfollow' : ''}`}
                         onClick={() => toggleFollow(u._id)}
                       >
-                        {following ? 'Unfollow' : 'Follow'}
+                        {pending ? 'Cancel Request' : (following ? 'Unfollow' : 'Follow')}
                       </button>
-                      {!following && (
+                      {!isAccepted(u._id) && (
                         <button className="btn-request" onClick={() => setShowRequestModal(u)}>
-                          Message
+                          Message Request
                         </button>
                       )}
                     </div>
@@ -1054,6 +1151,13 @@ function Chat() {
               <span className="stat-dot">·</span>
               <span
                 className="stat-link"
+                onClick={() => { setFollowModalTab('pending'); setShowFollowModal(true); }}
+              >
+                <strong>{(localUser.pendingFollowing || []).length}</strong> Pending
+              </span>
+              <span className="stat-dot">·</span>
+              <span
+                className="stat-link"
                 onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }}
               >
                 <strong>{(localUser.followers || []).length}</strong> Followers
@@ -1077,7 +1181,7 @@ function Chat() {
             onClick={() => setSidebarTab('requests')}
           >
             📨 Requests
-            {chatRequests.length > 0 && <span className="tab-badge">{chatRequests.length}</span>}
+            {requestBadgeCount > 0 && <span className="tab-badge">{requestBadgeCount}</span>}
           </button>
           <button
             className={`tab-btn ${sidebarTab === 'discover' ? 'active' : ''}`}
@@ -1422,12 +1526,14 @@ function Chat() {
       {/* ─── Following / Followers Modal ─────────────────────────────────── */}
       {showFollowModal && (() => {
         const profileUser = viewingUser || localUser;
+        const isMe = profileUser._id === localUser._id;
         const PdisplayName = profileUser.displayName || profileUser.username || 'User';
         const Pinitials = PdisplayName.split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase();
 
         const followingIds = (profileUser.following || []).map(String);
         const followerIds = (profileUser.followers || []).map(String);
-        const listIds = followModalTab === 'following' ? followingIds : followerIds;
+        const pendingIds = (isMe ? (localUser.pendingFollowing || []) : []).map(String);
+        const listIds = followModalTab === 'following' ? followingIds : (followModalTab === 'followers' ? followerIds : pendingIds);
         const listUsers = users.filter(u => listIds.includes(String(u._id)));
         return (
           <div className="modal-overlay" onClick={() => setShowFollowModal(false)}>
@@ -1457,6 +1563,14 @@ function Chat() {
                 >
                   {followingIds.length} Following
                 </button>
+                {isMe && (
+                  <button
+                    className={`follow-tab-btn ${followModalTab === 'pending' ? 'active' : ''}`}
+                    onClick={() => setFollowModalTab('pending')}
+                  >
+                    {pendingIds.length} Pending
+                  </button>
+                )}
                 <button
                   className={`follow-tab-btn ${followModalTab === 'followers' ? 'active' : ''}`}
                   onClick={() => setFollowModalTab('followers')}
@@ -1469,8 +1583,8 @@ function Chat() {
               <div className="follow-modal-list">
                 {listUsers.length === 0 ? (
                   <div className="empty-tab" style={{ padding: '30px 10px' }}>
-                    <div className="empty-icon">{followModalTab === 'following' ? '👣' : '👥'}</div>
-                    <div>{followModalTab === 'following' ? "You don't follow anyone yet" : 'No followers yet'}</div>
+                    <div className="empty-icon">{followModalTab === 'following' ? '👣' : (followModalTab === 'pending' ? '⏳' : '👥')}</div>
+                    <div>{followModalTab === 'following' ? "You don't follow anyone yet" : (followModalTab === 'pending' ? 'No pending requests' : 'No followers yet')}</div>
                   </div>
                 ) : listUsers.map(u => (
                   <div key={u._id} className="follow-user-row">
@@ -1497,13 +1611,23 @@ function Chat() {
                           onClick={() => { openChat(u); setShowFollowModal(false); }}
                         >💬 Chat</button>
                       )}
-                      <button
-                        className={`btn-follow ${isFollowing(u._id) ? 'btn-unfollow' : ''}`}
-                        style={{ fontSize: '10px', padding: '3px 8px' }}
-                        onClick={() => toggleFollow(u._id)}
-                      >
-                        {isFollowing(u._id) ? 'Unfollow' : '+ Follow'}
-                      </button>
+                      {followModalTab === 'pending' ? (
+                        <button
+                          className="btn-follow btn-unfollow"
+                          style={{ fontSize: '10px', padding: '3px 8px' }}
+                          onClick={() => toggleFollow(u._id)}
+                        >
+                          Cancel Request
+                        </button>
+                      ) : (
+                        <button
+                          className={`btn-follow ${isFollowing(u._id) ? 'btn-unfollow' : ''}`}
+                          style={{ fontSize: '10px', padding: '3px 8px' }}
+                          onClick={() => toggleFollow(u._id)}
+                        >
+                          {isFollowing(u._id) ? 'Unfollow' : '+ Follow'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1604,6 +1728,15 @@ function Chat() {
                   <div className="profile-stat-num">{(profileUser.following || []).length}</div>
                   <div className="profile-stat-label">Following</div>
                 </div>
+                {isMe && (
+                  <>
+                    <div className="profile-stat-divider" />
+                    <div className="profile-stat" onClick={() => { setShowProfileModal(false); setFollowModalTab('pending'); setShowFollowModal(true); }}>
+                      <div className="profile-stat-num">{(profileUser.pendingFollowing || []).length}</div>
+                      <div className="profile-stat-label">Pending</div>
+                    </div>
+                  </>
+                )}
                 <div className="profile-stat-divider" />
                 <div className="profile-stat" onClick={() => { setShowProfileModal(false); setFollowModalTab('followers'); setShowFollowModal(true); }}>
                   <div className="profile-stat-num">{(profileUser.followers || []).length}</div>
@@ -1634,11 +1767,11 @@ function Chat() {
                 ) : (
                   <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
                     <button 
-                      className={`modal-btn ${isFollowing(profileUser._id) ? 'cancel' : 'submit'}`} 
+                      className={`modal-btn ${(isFollowing(profileUser._id) || hasPendingRequest(profileUser._id)) ? 'cancel' : 'submit'}`} 
                       style={{ flex: 1 }}
                       onClick={() => toggleFollow(profileUser._id)}
                     >
-                      {isFollowing(profileUser._id) ? 'Unfollow' : 'Follow'}
+                      {isFollowing(profileUser._id) ? 'Unfollow' : (hasPendingRequest(profileUser._id) ? 'Cancel Request' : 'Follow')}
                     </button>
                     <button 
                       className="modal-btn submit" 

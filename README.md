@@ -23,8 +23,8 @@ A full-stack real-time chat application with direct messages, group chats, media
 - Clear chat (self or everyone)
 - Image and media sharing
 - User profile (avatar, display name, bio)
-- Follow and unfollow
-- Chat request send, accept, decline
+- Follow and unfollow with pending requests
+- Chat request and message request send, accept, decline
 - Block and unblock users
 - Request history with statuses
 
@@ -101,6 +101,7 @@ Why this was used:
 - GET /api/messages/:userId/:otherId
 - POST /api/messages/seen
 - GET /api/messages/unread/:userId
+- GET /api/messages/requests/:userId
 
 ## 6. Socket Events
 
@@ -158,8 +159,8 @@ requestHistory stores event records with:
 
 Current behavior:
 
-- Follow logs followed and also logs pending request.
-- Unfollow logs unfollowed.
+- Follow sends a pending request until the receiver accepts it.
+- Unfollow cancels the follow link and pending request state.
 - Accept updates latest pending to accepted.
 - Decline updates latest pending to declined.
 
@@ -171,6 +172,8 @@ Requests tab now has two sections:
 - Request History
 
 Request History keeps accepted, declined, followed, and unfollowed events visible so they do not disappear after action.
+
+The Requests tab also shows pending message requests separately from follow requests.
 
 ## 9. Performance Improvements Implemented
 

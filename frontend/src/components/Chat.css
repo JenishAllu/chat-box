@@ -1486,7 +1486,8 @@ html, body, #root {
     height: var(--app-height);
     min-height: 100vh;
     min-height: var(--app-height);
-    padding: calc(env(safe-area-inset-top, 0px) + 20px) 10px 10px;
+    padding: calc(env(safe-area-inset-top, 0px) + 28px) 10px 10px;
+    box-sizing: border-box;
   }
 
   .mobile-back-btn {
@@ -1503,7 +1504,8 @@ html, body, #root {
 
   .chat-top {
     margin-bottom: 8px;
-    margin-top: 2px;
+    margin-top: 0;
+    padding-top: 4px;
     gap: 8px;
   }
 

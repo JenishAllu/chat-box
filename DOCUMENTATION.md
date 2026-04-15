@@ -22,7 +22,7 @@ Core capabilities:
 - Message replies, edit, delete, clear
 - Seen status and unread counts
 - Typing indicators and online/offline presence
-- Follow/request/accept social gating for direct messages
+- Follow/request/accept social gating for direct messages, including pending follow state and message requests
 - Profile avatar, profile info, block/unblock users
 - Client-side AES encryption/decryption for message bodies
 
@@ -72,7 +72,8 @@ Core capabilities:
 ### 2.1 Social and Access-Control Changes
 - Added follow/follower model fields.
 - Added chat request workflow:
-  - Follow or request-chat can create incoming request.
+  - Follow creates a pending follow request until accepted.
+  - Request-chat creates a separate message request entry.
   - Receiver can accept/decline.
   - Direct messages are blocked unless both users accepted each other.
 - Added block/unblock behavior:
@@ -220,6 +221,8 @@ Endpoints and behavior:
   - Marks all incoming unseen messages in room as seen.
 - GET /api/messages/unread/:userId
   - Aggregates unseen message counts by sender.
+- GET /api/messages/requests/:userId
+  - Returns pending message requests grouped by sender.
 
 ## 4.6 Data Models
 
@@ -229,7 +232,7 @@ Fields:
 - password
 - avatar, displayName, bio
 - following, followers, blocked
-- chatRequests, acceptedChats
+- pendingFollowing, chatRequests, acceptedChats
 
 ### backend/models/Group.js
 Fields:

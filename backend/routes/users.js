@@ -1,6 +1,11 @@
 
 const router = require("express").Router();
 const User = require("../models/User");
+const Message = require("../models/Message");
+
+function getRoom(a, b) {
+  return [a, b].sort().join('_');
+}
 
 async function addRequestHistory(targetId, requesterId, status = 'pending') {
   const target = await User.findById(targetId);
@@ -46,6 +51,7 @@ router.get("/:id/suggestions", async (req, res) => {
     const excludeIds = [
       me._id,
       ...(me.following || []),
+      ...(me.pendingFollowing || []),
     ].map(String);
 
     const suggestions = await User.find({
@@ -92,23 +98,28 @@ router.put('/:id/avatar', async (req, res) => {
   }
 });
 
-// PUT follow a user (also sends a chat request to them)
+// PUT follow a user (stores as pending until target accepts request)
 router.put('/:id/follow/:targetId', async (req, res) => {
   try {
     const { id, targetId } = req.params;
     if (id === targetId) return res.status(400).json({ error: "Cannot follow yourself" });
 
+    const target = await User.findById(targetId).select('blocked');
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if ((target.blocked || []).map(String).includes(String(id))) {
+      return res.status(403).json({ error: 'Cannot send follow request' });
+    }
+
     const user = await User.findByIdAndUpdate(
       id,
-      { $addToSet: { following: targetId } },
+      { $addToSet: { pendingFollowing: targetId } },
       { new: true }
     ).select('-password');
 
-    // Add to target's followers AND send a chat request
+    // Send chat request to target; follow relation will be created on acceptance.
     await User.findByIdAndUpdate(targetId, {
-      $addToSet: { followers: id, chatRequests: id },
+      $addToSet: { chatRequests: id },
     });
-    await addRequestHistory(targetId, id, 'followed');
     await addRequestHistory(targetId, id);
 
     res.json(user);
@@ -124,10 +135,10 @@ router.put('/:id/unfollow/:targetId', async (req, res) => {
     const { id, targetId } = req.params;
     const user = await User.findByIdAndUpdate(
       id,
-      { $pull: { following: targetId } },
+      { $pull: { following: targetId, pendingFollowing: targetId } },
       { new: true }
     ).select('-password');
-    await User.findByIdAndUpdate(targetId, { $pull: { followers: id } });
+    await User.findByIdAndUpdate(targetId, { $pull: { followers: id, chatRequests: id } });
     await addRequestHistory(targetId, id, 'unfollowed');
     res.json(user);
   } catch (err) {
@@ -164,19 +175,30 @@ router.put('/:id/accept-chat/:requesterId', async (req, res) => {
   try {
     const { id, requesterId } = req.params;
 
+    const targetUpdate = {
+      $pull: { chatRequests: requesterId },
+      $addToSet: { acceptedChats: requesterId },
+    };
+
     // Remove from chatRequests, add to acceptedChats for both
     const user = await User.findByIdAndUpdate(
       id,
-      {
-        $pull: { chatRequests: requesterId },
-        $addToSet: { acceptedChats: requesterId },
-      },
+      targetUpdate,
       { new: true }
     ).select('-password');
 
-    await User.findByIdAndUpdate(requesterId, {
+    const requesterUpdate = {
       $addToSet: { acceptedChats: id },
-    });
+    };
+
+    await User.findByIdAndUpdate(
+      requesterId,
+      requesterUpdate
+    );
+    await Message.updateMany(
+      { room: getRoom(id, requesterId), isRequest: true, requestStatus: 'pending' },
+      { requestStatus: 'accepted' }
+    );
     await resolveLatestPendingHistory(id, requesterId, 'accepted');
 
     res.json(user);
@@ -196,6 +218,11 @@ router.put('/:id/decline-chat/:requesterId', async (req, res) => {
       { $pull: { chatRequests: requesterId } },
       { new: true }
     ).select('-password');
+    await User.findByIdAndUpdate(requesterId, { $pull: { pendingFollowing: id } });
+    await Message.updateMany(
+      { room: getRoom(id, requesterId), isRequest: true, requestStatus: 'pending' },
+      { requestStatus: 'declined' }
+    );
     await resolveLatestPendingHistory(id, requesterId, 'declined');
 
     res.json(user);
@@ -211,10 +238,10 @@ router.put('/:id/block/:targetId', async (req, res) => {
     const { id, targetId } = req.params;
     const user = await User.findByIdAndUpdate(id, {
       $addToSet: { blocked: targetId },
-      $pull: { following: targetId, followers: targetId, acceptedChats: targetId, chatRequests: targetId },
+      $pull: { following: targetId, pendingFollowing: targetId, followers: targetId, acceptedChats: targetId, chatRequests: targetId },
     }, { new: true }).select('-password');
     await User.findByIdAndUpdate(targetId, {
-      $pull: { following: id, followers: id, acceptedChats: id, chatRequests: id },
+      $pull: { following: id, pendingFollowing: id, followers: id, acceptedChats: id, chatRequests: id },
     });
     res.json(user);
   } catch (err) {

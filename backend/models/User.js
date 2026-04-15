@@ -8,6 +8,7 @@ const userSchema=new mongoose.Schema({
   displayName:{type:String,default:''},       // shown name (editable, different from username)
   bio:{type:String,default:''},               // short bio / status
   following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  pendingFollowing: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   blocked: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   chatRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // incoming chat requests
