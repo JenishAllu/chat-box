@@ -2,6 +2,8 @@
 const router = require("express").Router();
 const User = require("../models/User");
 const Message = require("../models/Message");
+const Group = require("../models/Group");
+const bcrypt = require("bcryptjs");
 
 function getRoom(a, b) {
   return [a, b].sort().join('_');
@@ -177,10 +179,10 @@ router.put('/:id/accept-chat/:requesterId', async (req, res) => {
 
     const targetUpdate = {
       $pull: { chatRequests: requesterId },
-      $addToSet: { acceptedChats: requesterId },
+      $addToSet: { acceptedChats: requesterId, followers: requesterId },
     };
 
-    // Remove from chatRequests, add to acceptedChats for both
+    // Remove from chatRequests, add to acceptedChats and followers for target
     const user = await User.findByIdAndUpdate(
       id,
       targetUpdate,
@@ -188,7 +190,8 @@ router.put('/:id/accept-chat/:requesterId', async (req, res) => {
     ).select('-password');
 
     const requesterUpdate = {
-      $addToSet: { acceptedChats: id },
+      $addToSet: { acceptedChats: id, following: id },
+      $pull: { pendingFollowing: id },
     };
 
     await User.findByIdAndUpdate(
@@ -261,6 +264,86 @@ router.put('/:id/profile', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// PUT change account password
+router.put('/:id/password', async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const matches = await bcrypt.compare(currentPassword, user.password);
+    if (!matches) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    user.password = hashed;
+    await user.save();
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// DELETE account and clean related references
+router.delete('/:id', async (req, res) => {
+  try {
+    const { currentPassword } = req.body;
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'currentPassword is required' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const matches = await bcrypt.compare(currentPassword, user.password);
+    if (!matches) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    await Message.deleteMany({ $or: [{ from: req.params.id }, { to: req.params.id }] });
+
+    const groups = await Group.find({ $or: [{ members: req.params.id }, { admins: req.params.id }, { admin: req.params.id }] });
+    for (const group of groups) {
+      group.members = (group.members || []).filter(memberId => String(memberId) !== String(req.params.id));
+      group.admins = (group.admins || []).filter(adminId => String(adminId) !== String(req.params.id));
+      if (String(group.admin || '') === String(req.params.id)) {
+        group.admin = group.admins[0] || group.members[0] || null;
+      }
+      if (group.admin && !(group.admins || []).some(adminId => String(adminId) === String(group.admin))) {
+        group.admins = [group.admin];
+      }
+      await group.save();
+    }
+
+    await User.updateMany(
+      {},
+      {
+        $pull: {
+          following: req.params.id,
+          pendingFollowing: req.params.id,
+          followers: req.params.id,
+          blocked: req.params.id,
+          chatRequests: req.params.id,
+          acceptedChats: req.params.id,
+        }
+      }
+    );
+
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Account deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 

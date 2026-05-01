@@ -1,15 +1,20 @@
 /* Aesthetic, animated chat styles */
 :root {
-  --bg: #0f1722;
-  --panel: #0b1220;
-  --accent: #6ee7b7;
-  --muted: #94a3b8;
-  --me: #2b3650;
-  --you: #1f2937;
+  --bg: #0a0a0f;
+  --panel: rgba(20, 20, 30, 0.6);
+  --accent: #00d2ff;
+  --accent-glow: rgba(0, 210, 255, 0.6);
+  --muted: rgba(255, 255, 255, 0.5);
+  --me: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%);
+  --you: rgba(255, 255, 255, 0.05);
 }
 
 body {
-  background: linear-gradient(180deg, #071029 0%, #0f1722 100%);
+  background: radial-gradient(circle at 15% 50%, rgba(144, 19, 254, 0.15), transparent 25%),
+              radial-gradient(circle at 85% 30%, rgba(0, 212, 255, 0.15), transparent 25%);
+  background-color: #050505;
+  color: #fff;
+  font-family: 'Outfit', Inter, sans-serif;
 }
 
 .chat-root {
@@ -255,6 +260,20 @@ body {
   border-bottom-left-radius: 4px
 }
 
+.forwarded-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(110, 231, 183, 0.14);
+  color: #6ee7b7;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .meta {
   font-size: 14px;
   font-weight: 600;
@@ -278,6 +297,23 @@ body {
 
 .logout-btn:hover {
   background: rgba(255, 107, 107, 0.1);
+}
+
+.settings-btn {
+  background: transparent;
+  border: 1px solid rgba(110, 231, 183, 0.35);
+  color: #6ee7b7;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.2s;
+}
+
+.settings-btn:hover {
+  background: rgba(110, 231, 183, 0.1);
 }
 
 .input-area {
@@ -417,6 +453,144 @@ body {
   color: #e6eef8;
   width: 100%;
   box-sizing: border-box;
+}
+
+.forward-modal {
+  max-height: 80vh;
+  overflow: hidden;
+}
+
+.forward-preview {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+
+.forward-preview-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.forward-preview-text,
+.forward-preview-media {
+  font-size: 14px;
+  color: #e6eef8;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.forward-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+  color: #e6eef8;
+  outline: none;
+}
+
+.forward-target-list {
+  margin-top: 12px;
+  max-height: 40vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.forward-target-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.forward-target-item:hover {
+  transform: translateY(-1px);
+  background: rgba(110, 231, 183, 0.08);
+  border-color: rgba(110, 231, 183, 0.24);
+}
+
+.forward-target-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.account-settings-panel {
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.account-settings-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.account-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.delete-account-box {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.delete-account-title {
+  color: #ffb4b4;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.delete-account-copy {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.delete-account-btn {
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ffb4b4;
+}
+
+.delete-account-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+@media (max-width: 900px) {
+  .account-settings-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .replying-indicator-content {
   display: flex;
@@ -1660,4 +1834,392 @@ html, body, #root {
   .options-menu {
     min-width: 86px;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* NEW GLOWING DYNAMIC AESTHETIC OVERRIDES */
+/* -------------------------------------------------------------------------- */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+.chat-root {
+  font-family: 'Outfit', sans-serif;
+  background-color: transparent;
+}
+
+.sidebar {
+  background: rgba(10, 10, 15, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-header .avatar {
+  background: linear-gradient(135deg, #00d2ff 0%, #9013fe 100%);
+  box-shadow: 0 0 15px rgba(144, 19, 254, 0.5);
+  animation: glowPulse 3s infinite alternate;
+}
+
+@keyframes glowPulse {
+  0% { box-shadow: 0 0 10px rgba(0, 212, 255, 0.4); }
+  100% { box-shadow: 0 0 25px rgba(144, 19, 254, 0.7); }
+}
+
+.user-item {
+  border-radius: 12px;
+  margin-bottom: 4px;
+}
+
+.user-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateX(6px);
+}
+
+.user-item.active {
+  background: rgba(0, 210, 255, 0.15);
+  border-left: 3px solid #00d2ff;
+  box-shadow: inset 20px 0 30px -20px rgba(0, 212, 255, 0.3);
+}
+
+.user-avatar {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.online-indicator {
+  background-color: #00ffcc;
+  box-shadow: 0 0 8px #00ffcc, inset 0 0 4px #fff;
+  border-color: #0a0a0f;
+}
+
+.chat-area {
+  background: transparent;
+}
+
+.messages {
+  background: rgba(20, 20, 25, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.bubble {
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.bubble.sent {
+  background: var(--me);
+  color: #fff;
+  border-bottom-right-radius: 0;
+  box-shadow: 0 5px 15px rgba(0, 212, 255, 0.3);
+}
+
+.bubble.received {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: #fff;
+  border-bottom-left-radius: 0;
+}
+
+.input-area textarea {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  transition: all 0.3s ease;
+}
+
+.input-area textarea:focus {
+  background: rgba(20, 20, 30, 0.5);
+  border-color: #00d2ff;
+  box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.1), 0 0 10px rgba(0, 212, 255, 0.2);
+  outline: none;
+}
+
+.send-button {
+  background: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%);
+  border-radius: 12px;
+  color: #fff;
+  box-shadow: 0 5px 15px rgba(0, 212, 255, 0.4);
+  transition: all 0.3s ease;
+}
+
+.send-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 212, 255, 0.6);
+}
+
+.media-btn {
+  color: #00d2ff;
+}
+
+.media-btn:hover {
+  background: rgba(0, 212, 255, 0.15);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.2);
+}
+
+/* Modals glassmorphism */
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+}
+
+.modal-content {
+  background: rgba(15, 15, 20, 0.85);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 30px rgba(144, 19, 254, 0.2);
+  border-radius: 24px;
+}
+
+.modal-content input[type="text"], .modal-content input[type="password"] {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+.modal-content input[type="text"]:focus, .modal-content input[type="password"]:focus {
+  border-color: #9013fe;
+  box-shadow: 0 0 0 3px rgba(144, 19, 254, 0.1), 0 0 10px rgba(144, 19, 254, 0.2);
+  outline: none;
+}
+
+.modal-btn.submit {
+  background: linear-gradient(135deg, #9013fe 0%, #3a7bd5 100%);
+  color: white;
+  box-shadow: 0 5px 15px rgba(144, 19, 254, 0.4);
+}
+
+.modal-btn.submit:hover {
+  box-shadow: 0 8px 20px rgba(144, 19, 254, 0.6);
+}
+
+.badge {
+  background: linear-gradient(135deg, #ff007a, #9013fe);
+  box-shadow: 0 0 10px rgba(255, 0, 122, 0.5);
+}
+
+/* Sidebar action buttons */
+.create-group-btn {
+  border-color: #00d2ff;
+  color: #00d2ff;
+}
+
+.create-group-btn:hover {
+  background: rgba(0, 212, 255, 0.15);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+
+/* Make headers glow */
+.chat-top .user-name {
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
+.chat-top .other-avatar {
+  background: linear-gradient(135deg, #9013fe, #00d2ff);
+  box-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
+}
+
+/* Custom scrollbars for a sleek look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.5);
+}
+/* -------------------------------------------------------------------------- */
+/* SIDEBAR HEADER CLEANUP */
+/* -------------------------------------------------------------------------- */
+
+.sidebar-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 15px;
+}
+
+.sidebar-header > div:nth-child(2) {
+  flex: 1 1 50%;
+}
+
+.sidebar-header .user-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: linear-gradient(135deg, #00d2ff 0%, #9013fe 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.user-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 4px;
+  width: 100%;
+}
+
+.stat-link {
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 3px 6px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.stat-link:hover {
+  background: rgba(0, 212, 255, 0.15);
+  color: #fff;
+}
+
+.stat-dot {
+  display: none;
+}
+
+.sidebar-header .settings-btn, .sidebar-header .logout-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-left: 0;
+}
+
+.sidebar-header .settings-btn {
+  background: rgba(144, 19, 254, 0.1);
+  border-color: rgba(144, 19, 254, 0.3);
+  color: #d18cff;
+}
+
+.sidebar-header .settings-btn:hover {
+  background: rgba(144, 19, 254, 0.25);
+}
+
+.sidebar-header .logout-btn {
+  background: rgba(255, 59, 48, 0.1);
+  border-color: rgba(255, 59, 48, 0.3);
+}
+
+.sidebar-header-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+}
+/* -------------------------------------------------------------------------- */
+/* ACCOUNT SETTINGS PANEL CLEANUP */
+/* -------------------------------------------------------------------------- */
+
+.account-settings-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.account-settings-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #00d2ff;
+  margin-bottom: 16px;
+  letter-spacing: 0.1em;
+}
+
+.account-settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-field label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.delete-account-box {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px dashed rgba(255, 59, 48, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.delete-account-title {
+  color: #ff4d4f;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.delete-account-copy {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 8px;
+}
+
+.delete-account-btn {
+  background: rgba(255, 59, 48, 0.15) !important;
+  border: 1px solid rgba(255, 59, 48, 0.4) !important;
+  color: #ff4d4f !important;
+  font-weight: 700;
+  padding: 10px;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.delete-account-btn:hover {
+  background: rgba(255, 59, 48, 0.3) !important;
+  box-shadow: 0 0 15px rgba(255, 59, 48, 0.3);
+}
+/* -------------------------------------------------------------------------- */
+/* SIDEBAR HEADER EXPANDABLE FEATURE */
+/* -------------------------------------------------------------------------- */
+
+.sidebar-header-expandable {
+  width: 100%;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, margin-top 0.3s ease;
+  margin-top: 0;
+}
+
+.sidebar-header:hover .sidebar-header-expandable,
+.sidebar-header:focus-within .sidebar-header-expandable,
+.sidebar-header:active .sidebar-header-expandable {
+  max-height: 150px;
+  opacity: 1;
+  margin-top: 6px;
+}
+
+.sidebar-header {
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.sidebar-header:hover {
+  background-color: rgba(255, 255, 255, 0.03);
 }

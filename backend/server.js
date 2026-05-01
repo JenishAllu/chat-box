@@ -114,7 +114,7 @@ io.on("connection", (socket) => {
 
   socket.on("sendMessage", async (data) => {
     try {
-      const { from, to, message, media, replyTo, isGroup } = data;
+      const { from, to, message, media, replyTo, isGroup, forwardedFrom } = data;
 
       if (!isGroup) {
         const User = require("./models/User");
@@ -141,6 +141,7 @@ io.on("connection", (socket) => {
             requestStatus: 'pending',
             ...(media ? { media } : {}),
             ...(replyTo ? { replyTo } : {}),
+            ...(forwardedFrom ? { forwardedFrom, isForwarded: true } : {}),
           });
 
           await User.findByIdAndUpdate(to, {
@@ -172,6 +173,10 @@ io.on("connection", (socket) => {
       }
       if (replyTo) {
         msgData.replyTo = replyTo;
+      }
+      if (forwardedFrom) {
+        msgData.forwardedFrom = forwardedFrom;
+        msgData.isForwarded = true;
       }
       let newMsg = await Message.create(msgData);
 

@@ -11,6 +11,8 @@ const messageSchema = new mongoose.Schema({
     name: String  // original filename
   },
   replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+  forwardedFrom: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+  isForwarded: { type: Boolean, default: false },
   isGroup: { type: Boolean, default: false },
   seen: { type: Boolean, default: false },
   isRequest: { type: Boolean, default: false },

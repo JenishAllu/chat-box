@@ -36,6 +36,13 @@ function getStoredUser() {
   }
 }
 
+const showBrowserNotification = (title, options) => {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    new Notification(title, options);
+  }
+};
+
 function Chat({ onLogout }) {
   const user = getStoredUser() || {};
   const nav = useNavigate();
@@ -48,6 +55,11 @@ function Chat({ onLogout }) {
     }
     if (!socket.connected) {
       socket.connect();
+    }
+    
+    // Ask for Notification permission on load
+    if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
+      Notification.requestPermission();
     }
   }, [localUser?._id, nav]);
   
@@ -70,6 +82,9 @@ function Chat({ onLogout }) {
   const [editingMessage, setEditingMessage] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showForwardModal, setShowForwardModal] = useState(false);
+  const [forwardingMessage, setForwardingMessage] = useState(null);
+  const [forwardSearch, setForwardSearch] = useState('');
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editGroupNameStr, setEditGroupNameStr] = useState('');
   const [viewImageUrl, setViewImageUrl] = useState(null);
@@ -111,6 +126,9 @@ function Chat({ onLogout }) {
   const [groupAddSearch, setGroupAddSearch] = useState('');
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [showBlockedSection, setShowBlockedSection] = useState(false);
+  const [passwordDraft, setPasswordDraft] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [deletePassword, setDeletePassword] = useState('');
+  const [accountActionBusy, setAccountActionBusy] = useState(false);
 
   // ─── Toast notification ───────────────────────────────────────────────────
   const [toast, setToast] = useState(null);
@@ -183,12 +201,43 @@ function Chat({ onLogout }) {
 
   const visibleMessages = useMemo(() => {
     if (!selected) return [];
-    if (selected.isGroup) {
-      return messages.filter(m => m.room === selected._id);
-    }
-    const targetRoom = room(user._id, selected._id);
-    return messages.filter(m => ((m.room && m.room === targetRoom) || room(m.from, m.to) === targetRoom));
+    const filtered = selected.isGroup
+      ? messages.filter(m => m.room === selected._id)
+      : (() => {
+          const targetRoom = room(user._id, selected._id);
+          return messages.filter(m => ((m.room && m.room === targetRoom) || room(m.from, m.to) === targetRoom));
+        })();
+
+    return filtered.slice().sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      if (aTime !== bTime) return aTime - bTime;
+      return String(a._id || '').localeCompare(String(b._id || ''));
+    });
   }, [messages, selected, user._id]);
+
+  const conversationActivityMap = useMemo(() => {
+    const map = {};
+
+    messages.forEach(m => {
+      const roomId = m.room || (m.isGroup ? m.to : room(m.from, m.to));
+      const timestamp = new Date(m.createdAt || 0).getTime();
+      if (!map[roomId] || timestamp > map[roomId]) {
+        map[roomId] = timestamp;
+      }
+    });
+
+    return map;
+  }, [messages]);
+
+  const sortedGroups = useMemo(() => {
+    return [...groups].sort((a, b) => {
+      const aTime = conversationActivityMap[a._id] || 0;
+      const bTime = conversationActivityMap[b._id] || 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return String(a.username || '').localeCompare(String(b.username || ''));
+    });
+  }, [groups, conversationActivityMap]);
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
   const formatTime = (dateStr) => {
@@ -204,6 +253,12 @@ function Chat({ onLogout }) {
     }
     const type = media.type || 'application/octet-stream';
     return `data:${type};base64,${media.data}`;
+  };
+
+  const getMessagePreview = (message) => {
+    if (!message) return 'No text';
+    const trimmed = String(message).trim();
+    return trimmed.length > 90 ? `${trimmed.slice(0, 90)}…` : trimmed;
   };
 
   const compressImage = (file) => {
@@ -325,6 +380,7 @@ function Chat({ onLogout }) {
     // ─── Real-time chat request notifications ─────────────────────────────
     socket.on("chatRequestReceived", ({ from }) => {
       showToast(`📨 ${from.username} sent you a chat request!`, 'request');
+      showBrowserNotification('New Chat Request', { body: `${from.username} sent you a chat request!`, icon: from.avatar });
       // Add to requests list if not already there
       setChatRequests(prev => prev.find(u => u._id === from._id) ? prev : [...prev, from]);
       setRequestHistory(prev => {
@@ -342,6 +398,7 @@ function Chat({ onLogout }) {
 
     socket.on("messageRequestReceived", ({ from, message }) => {
       showToast(`📩 Message request from ${from.username}`, 'request');
+      showBrowserNotification('Message Request', { body: `New message request from ${from.username}`, icon: from.avatar });
       setMessageRequests(prev => {
         const existing = prev.find(item => String(item?.from?._id) === String(from._id));
         const nextEntry = {
@@ -430,6 +487,24 @@ function Chat({ onLogout }) {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
+  // ─── Visibility: mark seen when tab comes back into focus ─────────────────
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const currentSelected = selectedRef.current;
+      if (!document.hidden && currentSelected && !currentSelected.isGroup) {
+        // Tab became visible — mark current chat as seen now
+        axios.post(`${API_BASE}/api/messages/seen`, { userId: user._id, otherId: currentSelected._id })
+          .then(() => {
+            setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
+          })
+          .catch(() => {});
+        socket.emit('markAllSeen', { userId: user._id, otherUserId: currentSelected._id });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [user._id]);
+
   // ─── Socket: messages ─────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (data) => {
@@ -443,24 +518,36 @@ function Chat({ onLogout }) {
         return [...prev, decryptedData];
       });
       if (data.isGroup) {
-        if (data.to !== currentSelected?._id && data.from !== user._id)
+        if (data.to !== currentSelected?._id && data.from !== user._id) {
           setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
+          showBrowserNotification('New Group Message', { body: `New message in group` });
+        }
       } else {
-        if (data.to === user._id && data.from !== currentSelected?._id)
+        if (data.to === user._id && data.from !== currentSelected?._id) {
           setUnreadCounts(prev => ({ ...prev, [data.from]: (prev[data.from] || 0) + 1 }));
+          showBrowserNotification('New Message', { body: `New message received` });
+        }
       }
-      if (!data.isGroup && data.to === user._id && data.from === currentSelected?._id)
-        socket.emit('markSeen', data._id);
+      if (!data.isGroup && data.to === user._id && data.from === currentSelected?._id) {
+        // Only mark seen if the tab is actually visible (not minimized/backgrounded)
+        if (!document.hidden) {
+          socket.emit('markSeen', data._id);
+        }
+      }
     };
 
     const backgroundHandler = (data) => {
       const currentSelected = selectedRef.current;
       if (data.isGroup) {
-        if (data.to !== currentSelected?._id && data.from !== user._id)
+        if (data.to !== currentSelected?._id && data.from !== user._id) {
           setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
+          showBrowserNotification('New Group Message', { body: `New message in group` });
+        }
       } else {
-        if (data.from !== currentSelected?._id)
+        if (data.from !== currentSelected?._id) {
           setUnreadCounts(prev => ({ ...prev, [data.from]: (prev[data.from] || 0) + 1 }));
+          showBrowserNotification('New Message', { body: `New message received` });
+        }
       }
     };
 
@@ -525,12 +612,17 @@ function Chat({ onLogout }) {
     } catch (err) { console.error("failed to load messages", err); }
 
     if (!u.isGroup) {
-      try {
-        await axios.post(`${API_BASE}/api/messages/seen`, { userId: user._id, otherId: u._id });
-        setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
-      } catch (e) { console.error("failed to mark seen", e); }
-      socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
-      socket.emit("markAllSeen", { userId: user._id, otherUserId: u._id });
+      // Only mark all messages as seen if the tab is currently visible
+      if (!document.hidden) {
+        try {
+          await axios.post(`${API_BASE}/api/messages/seen`, { userId: user._id, otherId: u._id });
+          setMessages(prev => prev.map(m => m.to === user._id ? { ...m, seen: true } : m));
+        } catch (e) { console.error("failed to mark seen", e); }
+        socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
+        socket.emit("markAllSeen", { userId: user._id, otherUserId: u._id });
+      } else {
+        socket.emit("joinRoom", { userId: user._id, otherUserId: u._id });
+      }
     } else {
       socket.emit("joinGroup", u._id);
     }
@@ -732,9 +824,22 @@ function Chat({ onLogout }) {
     try {
       const dataUrl = await compressImage(f);
       const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/avatar`, { avatar: dataUrl });
-      setLocalUser(res.data); localStorage.setItem('user', JSON.stringify(res.data));
+      setLocalUser(res.data); 
+      if (viewingUser && viewingUser._id === localUser._id) setViewingUser(res.data);
+      localStorage.setItem('user', JSON.stringify(res.data));
     } catch (err) { console.error('avatar upload failed', err); }
     e.target.value = null;
+  };
+
+  const removeAvatar = async () => {
+    if (!window.confirm("Are you sure you want to remove your profile picture?")) return;
+    try {
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/avatar`, { avatar: "" });
+      setLocalUser(res.data); 
+      if (viewingUser && viewingUser._id === localUser._id) setViewingUser(res.data);
+      localStorage.setItem('user', JSON.stringify(res.data));
+      showToast('Profile picture removed', 'success');
+    } catch (err) { console.error('avatar remove failed', err); showToast('Failed to remove picture', 'error'); }
   };
 
   const onGroupAvatarClick = () => selected?.isGroup && groupFileRef.current && groupFileRef.current.click();
@@ -765,6 +870,8 @@ function Chat({ onLogout }) {
     setProfileDraft({ displayName: localUser.displayName || '', bio: localUser.bio || '' });
     setProfileEditMode(false);
     setShowBlockedSection(false);
+    setPasswordDraft({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setDeletePassword('');
     loadBlockedUsers();
     setShowProfileModal(true);
   };
@@ -802,6 +909,60 @@ function Chat({ onLogout }) {
     } catch { showToast('Failed to update profile', 'error'); }
   };
 
+  const updatePassword = async () => {
+    if (!passwordDraft.currentPassword || !passwordDraft.newPassword || !passwordDraft.confirmPassword) {
+      showToast('Fill all password fields', 'error');
+      return;
+    }
+    if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
+      showToast('New passwords do not match', 'error');
+      return;
+    }
+    setAccountActionBusy(true);
+    try {
+      await axios.put(`${API_BASE}/api/users/${localUser._id}/password`, {
+        currentPassword: passwordDraft.currentPassword,
+        newPassword: passwordDraft.newPassword,
+      });
+      setPasswordDraft({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      showToast('Password updated', 'success');
+    } catch (err) {
+      showToast(err?.response?.data?.error || 'Failed to update password', 'error');
+    } finally {
+      setAccountActionBusy(false);
+    }
+  };
+
+  const endSession = () => {
+    socket.disconnect();
+    localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    if (onLogout) {
+      onLogout();
+    }
+    nav('/', { replace: true });
+  };
+
+  const deleteAccount = async () => {
+    if (!deletePassword) {
+      showToast('Enter your current password', 'error');
+      return;
+    }
+    if (!window.confirm('Delete this account permanently? This cannot be undone.')) return;
+    setAccountActionBusy(true);
+    try {
+      await axios.delete(`${API_BASE}/api/users/${localUser._id}`, {
+        data: { currentPassword: deletePassword }
+      });
+      showToast('Account deleted', 'success');
+      endSession();
+    } catch (err) {
+      showToast(err?.response?.data?.error || 'Failed to delete account', 'error');
+    } finally {
+      setAccountActionBusy(false);
+    }
+  };
+
   const unblockUser = async (uId) => {
     try {
       const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/unblock/${uId}`);
@@ -824,6 +985,42 @@ function Chat({ onLogout }) {
   const deleteMsg = (id, type) => {
     socket.emit("deleteMessage", { id, type, userId: user._id });
     setShowDeleteModal(null);
+  };
+
+  const openForwardModal = (message) => {
+    setForwardingMessage(message);
+    setForwardSearch('');
+    setOpenMenuId(null);
+    setShowForwardModal(true);
+  };
+
+  const sendForwardedMessage = (target) => {
+    if (!forwardingMessage || !target) return;
+
+    const payload = {
+      from: user._id,
+      to: target._id,
+      message: forwardingMessage.message ? encryptMessage(forwardingMessage.message, ENCRYPTION_KEY) : '',
+      forwardedFrom: forwardingMessage._id,
+    };
+
+    if (target.isGroup) payload.isGroup = true;
+    if (forwardingMessage.media) payload.media = forwardingMessage.media;
+
+    const optimisticMsg = {
+      ...payload,
+      message: forwardingMessage.message || '',
+      media: forwardingMessage.media || undefined,
+      isForwarded: true,
+      room: target.isGroup ? target._id : room(user._id, target._id),
+      seen: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, optimisticMsg]);
+    socket.emit('sendMessage', payload);
+    setShowForwardModal(false);
+    setForwardingMessage(null);
   };
 
   const clearChat = (type) => {
@@ -894,18 +1091,40 @@ function Chat({ onLogout }) {
   }, [messages]);
 
   const logout = () => {
-    socket.disconnect();
-    if (onLogout) {
-      onLogout();
-    } else {
-      localStorage.removeItem("user");
-      localStorage.removeItem("token");
-    }
-    nav("/", { replace: true });
+    endSession();
   };
 
   // ─── Accepted chats (for Chats tab) ──────────────────────────────────────
-  const acceptedUserList = useMemo(() => users.filter(u => isAccepted(u._id)), [users, acceptedSet]);
+  const acceptedUserList = useMemo(() => {
+    return users
+      .filter(u => isAccepted(u._id))
+      .sort((a, b) => {
+        const aRoom = room(user._id, a._id);
+        const bRoom = room(user._id, b._id);
+        const aTime = conversationActivityMap[aRoom] || 0;
+        const bTime = conversationActivityMap[bRoom] || 0;
+        if (aTime !== bTime) return bTime - aTime;
+        return String(a.username || '').localeCompare(String(b.username || ''));
+      });
+  }, [users, acceptedSet, conversationActivityMap, user._id]);
+
+  const forwardTargets = useMemo(() => {
+    const currentId = selected?._id ? String(selected._id) : '';
+    return [
+      ...sortedGroups.filter(item => String(item._id) !== currentId),
+      ...acceptedUserList.filter(item => String(item._id) !== currentId),
+    ];
+  }, [sortedGroups, acceptedUserList, selected?._id]);
+
+  const filteredForwardTargets = useMemo(() => {
+    const query = forwardSearch.trim().toLowerCase();
+    if (!query) return forwardTargets;
+    return forwardTargets.filter(item => {
+      const name = (item.username || item.name || '').toLowerCase();
+      const label = item.isGroup ? 'group' : 'chat';
+      return name.includes(query) || label.includes(query);
+    });
+  }, [forwardTargets, forwardSearch]);
 
   // ─── Render: sidebar content per tab ─────────────────────────────────────
   const renderSidebarContent = () => {
@@ -913,7 +1132,7 @@ function Chat({ onLogout }) {
       return (
         <div className="users-list">
           {/* Groups first */}
-          {groups.map(u => {
+          {sortedGroups.map(u => {
             const unread = unreadCounts[u._id] || 0;
             return (
               <div key={u._id} className={`user-item ${selected?._id === u._id ? 'active' : ''}`} onClick={() => openChat(u)}>
@@ -966,6 +1185,7 @@ function Chat({ onLogout }) {
 
     if (sidebarTab === 'requests') {
       const pendingRequestUsers = chatRequests.filter(u => !messageRequestSenderIdSet.has(String(u._id)));
+      const acceptedFollowBackRequests = requestHistory.filter(h => h?.status === 'accepted');
 
       return (
         <div className="users-list">
@@ -1019,27 +1239,49 @@ function Chat({ onLogout }) {
             </div>
           ))}
 
-          <div className="request-section-title" style={{ marginTop: '12px' }}>Request History</div>
-          {requestHistory.length === 0 ? (
+          <div className="request-section-title" style={{ marginTop: '12px' }}>Follow Back / History</div>
+          {acceptedFollowBackRequests.length === 0 && requestHistory.length === 0 ? (
             <div className="empty-tab">
               <div className="empty-icon">🕘</div>
               <div>No request history yet</div>
             </div>
           ) : requestHistory.map((h, idx) => {
-            const from = h?.from || {};
-            const fromId = String(from?._id || h?.from || `hist-${idx}`);
+            const fromRaw = h?.from;
+            const from = fromRaw && typeof fromRaw === 'object' ? fromRaw : {};
+            const fromId = String(from?._id || fromRaw || `hist-${idx}`);
+            const fromUsername = from?.username || 'Unknown user';
+            const fromAvatar = from?.avatar;
             const status = h?.status || 'pending';
+            const alreadyFollowing = isFollowing(fromId);
+            const alreadyPending = hasPendingRequest(fromId);
+            const isValidId = fromId && fromId.length > 6 && !fromId.startsWith('hist-');
             return (
               <div key={`${fromId}-${h?.requestedAt || idx}`} className="request-card history-card">
                 <div className="user-avatar">
-                  {from?.avatar ? <img src={from.avatar} alt="u" /> : (from?.username || 'U').slice(0, 1).toUpperCase()}
+                  {fromAvatar ? <img src={fromAvatar} alt="u" /> : (fromUsername || 'U').slice(0, 1).toUpperCase()}
                 </div>
                 <div className="request-info">
-                  <div className="user-name">{from?.username || 'Unknown user'}</div>
+                  <div className="user-name">{fromUsername}</div>
                   <div className="request-history-meta">
                     <span className={`status-pill ${status}`}>{status}</span>
                     <span className="history-time">{new Date(h?.respondedAt || h?.requestedAt || Date.now()).toLocaleString()}</span>
                   </div>
+                  {status === 'accepted' && isValidId && (
+                    <div className="request-actions" style={{ marginTop: '8px' }}>
+                      <button
+                        className={`btn-follow ${alreadyFollowing || alreadyPending ? 'btn-unfollow' : ''}`}
+                        disabled={alreadyFollowing || alreadyPending}
+                        style={{ opacity: alreadyFollowing || alreadyPending ? 0.7 : 1, cursor: alreadyFollowing || alreadyPending ? 'default' : 'pointer' }}
+                        onClick={() => {
+                          if (!alreadyFollowing && !alreadyPending) {
+                            toggleFollow(fromId);
+                          }
+                        }}
+                      >
+                        {alreadyFollowing ? '✓ Following' : (alreadyPending ? '⏳ Pending...' : '+ Follow Back')}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1141,6 +1383,10 @@ function Chat({ onLogout }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
             <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} />
+          
+          <div className="sidebar-header-expandable">
             <div className="user-stats">
               <span
                 className="stat-link"
@@ -1163,9 +1409,11 @@ function Chat({ onLogout }) {
                 <strong>{(localUser.followers || []).length}</strong> Followers
               </span>
             </div>
+            <div className="sidebar-header-actions" style={{ display: 'flex', width: '100%', gap: '8px', marginTop: '10px' }}>
+              <button className="settings-btn" onClick={openProfileModal} title="Settings" style={{ flex: 1 }}>⚙ Settings</button>
+              <button className="logout-btn" onClick={logout} style={{ flex: 1 }}>Logout</button>
+            </div>
           </div>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} />
-          <button className="logout-btn" onClick={logout}>Logout</button>
         </div>
 
         {/* Tabs */}
@@ -1288,7 +1536,7 @@ function Chat({ onLogout }) {
                           setOpenHeaderMenu(false);
                         }}
                       >
-                        {isFollowing(selected._id) ? 'Unfollow' : 'Follow'}
+                        {isFollowing(selected._id) ? 'Unfollow' : (hasPendingRequest(selected._id) ? 'Cancel Request' : 'Follow')}
                       </button>
                     )}
                     {!selected.isGroup && (
@@ -1337,6 +1585,7 @@ function Chat({ onLogout }) {
                               <button onClick={() => { setEditingMessage(m); setMsg(m.message); setOpenMenuId(null); }}>Edit</button>
                               <button onClick={() => { setShowDeleteModal(m); setOpenMenuId(null); }}>Delete</button>
                               <button onClick={() => { setReplyingTo(m); setOpenMenuId(null); }}>Reply</button>
+                              <button onClick={() => openForwardModal(m)}>Forward</button>
                             </div>
                           )}
                         </div>
@@ -1350,6 +1599,9 @@ function Chat({ onLogout }) {
                           </div>
                         )}
                         <div className={`bubble ${m.from === user._id ? 'sent' : 'received'}`} style={{ maxWidth: '100%' }}>
+                          {m.isForwarded && (
+                            <div className="forwarded-tag">Forwarded</div>
+                          )}
                           {m.replyTo && (
                             <div className="replied-snippet">
                               <div className="replied-from">
@@ -1394,6 +1646,7 @@ function Chat({ onLogout }) {
                             <div className="options-menu">
                               <button onClick={() => { setShowDeleteModal(m); setOpenMenuId(null); }}>Delete</button>
                               <button onClick={() => { setReplyingTo(m); setOpenMenuId(null); }}>Reply</button>
+                              <button onClick={() => openForwardModal(m)}>Forward</button>
                             </div>
                           )}
                         </div>
@@ -1490,6 +1743,55 @@ function Chat({ onLogout }) {
               <button className="modal-btn submit" onClick={() => clearChat('me')}>Clear for me</button>
               <button className="modal-btn submit" onClick={() => clearChat('everyone')} style={{ background: '#ef4444', color: 'white' }}>Clear for everyone</button>
               <button className="modal-btn cancel" onClick={() => setShowClearModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forward Message Modal */}
+      {showForwardModal && forwardingMessage && (
+        <div className="modal-overlay">
+          <div className="modal-content forward-modal" style={{ maxWidth: '420px' }}>
+            <h2>Forward message</h2>
+            <div className="forward-preview">
+              <div className="forward-preview-label">Selected message</div>
+              {forwardingMessage.media ? (
+                <div className="forward-preview-media">Attachment{forwardingMessage.media.name ? `: ${forwardingMessage.media.name}` : ''}</div>
+              ) : (
+                <div className="forward-preview-text">{getMessagePreview(forwardingMessage.message)}</div>
+              )}
+            </div>
+            <input
+              type="text"
+              value={forwardSearch}
+              onChange={e => setForwardSearch(e.target.value)}
+              placeholder="Search chats or groups"
+              className="forward-search"
+            />
+            <div className="forward-target-list">
+              {filteredForwardTargets.length === 0 ? (
+                <div className="empty-tab" style={{ margin: '12px 0' }}>
+                  <div className="empty-icon">🔎</div>
+                  <div>No matching chats</div>
+                </div>
+              ) : filteredForwardTargets.map(target => (
+                <button
+                  key={target._id}
+                  className="forward-target-item"
+                  onClick={() => sendForwardedMessage(target)}
+                >
+                  <div className="user-avatar" style={{ position: 'relative' }}>
+                    {target.avatar ? <img src={target.avatar} alt="u" /> : (target.username || target.name || 'U').slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="forward-target-info">
+                    <div className="user-name">{target.username || target.name || 'Chat'}</div>
+                    <div className="user-subtitle">{target.isGroup ? 'Group' : 'Direct message'}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="modal-actions" style={{ marginTop: '16px' }}>
+              <button className="modal-btn cancel" onClick={() => { setShowForwardModal(false); setForwardingMessage(null); }}>Cancel</button>
             </div>
           </div>
         </div>
@@ -1621,11 +1923,11 @@ function Chat({ onLogout }) {
                         </button>
                       ) : (
                         <button
-                          className={`btn-follow ${isFollowing(u._id) ? 'btn-unfollow' : ''}`}
+                          className={`btn-follow ${isFollowing(u._id) || hasPendingRequest(u._id) ? 'btn-unfollow' : ''}`}
                           style={{ fontSize: '10px', padding: '3px 8px' }}
                           onClick={() => toggleFollow(u._id)}
                         >
-                          {isFollowing(u._id) ? 'Unfollow' : '+ Follow'}
+                          {isFollowing(u._id) ? 'Unfollow' : (hasPendingRequest(u._id) ? 'Cancel Request' : '+ Follow')}
                         </button>
                       )}
                     </div>
@@ -1655,7 +1957,7 @@ function Chat({ onLogout }) {
               <div className="profile-modal-cover" />
 
               {/* Avatar */}
-              <div className="profile-avatar-wrap">
+              <div className="profile-avatar-wrap" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                 <div
                   className={`profile-avatar ${isMe ? 'editable-avatar' : ''}`}
                   style={{ cursor: 'pointer' }}
@@ -1675,6 +1977,16 @@ function Chat({ onLogout }) {
                     </div>
                   )}
                 </div>
+                {isMe && profileUser.avatar && (
+                  <button 
+                    onClick={removeAvatar}
+                    style={{ background: 'transparent', border: '1px solid rgba(255, 59, 48, 0.4)', color: '#ff4d4f', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', transition: 'all 0.2s' }}
+                    onMouseOver={e => e.target.style.background = 'rgba(255, 59, 48, 0.1)'}
+                    onMouseOut={e => e.target.style.background = 'transparent'}
+                  >
+                    Remove Photo
+                  </button>
+                )}
               </div>
 
               {/* Display Name */}
@@ -1721,6 +2033,62 @@ function Chat({ onLogout }) {
                   </div>
                 )}
               </div>
+
+              {isMe && (
+                <div className="account-settings-panel">
+                  <div className="account-settings-title">Account Settings</div>
+                  <div className="account-settings-grid">
+                    <div className="profile-field">
+                      <label className="profile-label">Current Password</label>
+                      <input
+                        type="password"
+                        className="profile-input"
+                        value={passwordDraft.currentPassword}
+                        onChange={e => setPasswordDraft(d => ({ ...d, currentPassword: e.target.value }))}
+                        placeholder="Current password"
+                      />
+                    </div>
+                    <div className="profile-field">
+                      <label className="profile-label">New Password</label>
+                      <input
+                        type="password"
+                        className="profile-input"
+                        value={passwordDraft.newPassword}
+                        onChange={e => setPasswordDraft(d => ({ ...d, newPassword: e.target.value }))}
+                        placeholder="New password"
+                      />
+                    </div>
+                    <div className="profile-field">
+                      <label className="profile-label">Confirm Password</label>
+                      <input
+                        type="password"
+                        className="profile-input"
+                        value={passwordDraft.confirmPassword}
+                        onChange={e => setPasswordDraft(d => ({ ...d, confirmPassword: e.target.value }))}
+                        placeholder="Confirm new password"
+                      />
+                    </div>
+                  </div>
+                  <button className="modal-btn submit" onClick={updatePassword} disabled={accountActionBusy} style={{ width: '100%', marginTop: '10px' }}>
+                    {accountActionBusy ? 'Updating...' : 'Update Password'}
+                  </button>
+
+                  <div className="delete-account-box">
+                    <div className="delete-account-title">Delete Account</div>
+                    <div className="delete-account-copy">Enter your current password to permanently delete this account and all of its messages.</div>
+                    <input
+                      type="password"
+                      className="profile-input"
+                      value={deletePassword}
+                      onChange={e => setDeletePassword(e.target.value)}
+                      placeholder="Current password"
+                    />
+                    <button className="modal-btn cancel delete-account-btn" onClick={deleteAccount} disabled={accountActionBusy}>
+                      {accountActionBusy ? 'Deleting...' : 'Delete Account'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Stats */}
               <div className="profile-stats">

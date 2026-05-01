@@ -260,6 +260,7 @@ Additional project docs:
 
 - DOCUMENTATION.md (deep technical documentation)
 - CODE_EXPLANATION.md (beginner-friendly explanation)
+- FULL_PROJECT_DEEP_DIVE.md (clean all-in-one handoff guide)
 - ARCHITECTURE_FLOW_DIAGRAM.md (architecture and data flow diagrams)
 
 ## 15. Latest Change Summary
@@ -276,4 +277,4 @@ Recently completed:
 
 ---
 
-For full architecture and deep implementation details, see DOCUMENTATION.md and ARCHITECTURE_FLOW_DIAGRAM.md.
+For full architecture and deep implementation details, see DOCUMENTATION.md, FULL_PROJECT_DEEP_DIVE.md, and ARCHITECTURE_FLOW_DIAGRAM.md.
