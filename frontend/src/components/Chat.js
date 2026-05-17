@@ -6,6 +6,8 @@ import { useNavigate } from "react-router-dom";
 import CryptoJS from "crypto-js";
 import { encryptMessage, decryptMessage, decryptMessages } from "../utils/encryption";
 import "./Chat.css";
+import "./ThemeLight.css";
+import EmojiPicker from 'emoji-picker-react';
 
 const API_BASE = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || API_BASE;
@@ -62,7 +64,7 @@ function Chat({ onLogout }) {
       Notification.requestPermission();
     }
   }, [localUser?._id, nav]);
-  
+
   const displayName = localUser?.displayName || localUser?.username || 'user1';
   const initials = displayName.split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase();
 
@@ -79,6 +81,23 @@ function Chat({ onLogout }) {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [openMenuId, setOpenMenuId] = useState(null);
   const [openHeaderMenu, setOpenHeaderMenu] = useState(false);
+  const [isLightMode, setIsLightMode] = useState(true);
+  const [showNavMenu, setShowNavMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  useEffect(() => {
+    if (isLightMode) {
+      document.body.classList.add('light-theme-body');
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
+    } else {
+      document.body.classList.remove('light-theme-body');
+      document.documentElement.classList.remove('light');
+      document.documentElement.classList.add('dark');
+    }
+  }, [isLightMode]);
+
   const [editingMessage, setEditingMessage] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
@@ -1130,24 +1149,24 @@ function Chat({ onLogout }) {
   const renderSidebarContent = () => {
     if (sidebarTab === 'chats') {
       return (
-        <div className="users-list">
+        <>
           {/* Groups first */}
           {sortedGroups.map(u => {
             const unread = unreadCounts[u._id] || 0;
             return (
-              <div key={u._id} className={`user-item ${selected?._id === u._id ? 'active' : ''}`} onClick={() => openChat(u)}>
-                <div style={{ position: 'relative' }}>
-                  <div
-                    className="user-avatar"
-                    style={{ borderRadius: '8px' }}
-                    onClick={e => { e.stopPropagation(); if (u.avatar) handleAvatarClick(u.avatar); }}
-                    title="View group icon"
-                  >
-                    {u.avatar ? <img src={u.avatar} alt="g" style={{ borderRadius: '8px' }} /> : (u.username || 'G').slice(0, 1).toUpperCase()}
+              <div key={u._id} className={`chat-list-item-active flex items-center gap-4 p-4 rounded-2xl group cursor-pointer ${selected?._id === u._id ? 'bg-primary-container/10 border-l-4 border-primary' : 'hover:bg-surface-container-high'}`} onClick={() => openChat(u)}>
+                <div className="relative">
+                  <div className="w-12 h-12 rounded-full bg-tertiary-container flex items-center justify-center text-on-tertiary-container font-bold text-headline-sm overflow-hidden" onClick={e => { e.stopPropagation(); if (u.avatar) handleAvatarClick(u.avatar); }}>
+                    {u.avatar ? <img src={u.avatar} alt="g" className="w-full h-full object-cover" /> : (u.username || 'G').slice(0, 1).toUpperCase()}
                   </div>
                 </div>
-                <div className="user-meta"><div className="user-name">{u.username || 'Group'}</div><div className="user-subtitle">Group</div></div>
-                {unread > 0 && <div className="badge">{unread > 99 ? '99+' : unread}</div>}
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-baseline">
+                    <p className="text-label-md font-label-md text-on-surface truncate">{u.username || 'Group'}</p>
+                    <span className="text-label-sm font-label-sm text-on-surface-variant">Group</span>
+                  </div>
+                </div>
+                {unread > 0 && <div className="bg-primary text-white text-[10px] font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unread > 99 ? '99+' : unread}</div>}
               </div>
             );
           })}
@@ -1156,30 +1175,29 @@ function Chat({ onLogout }) {
             const unread = unreadCounts[u._id] || 0;
             const isOnline = onlineUsers[u._id] || false;
             return (
-              <div key={u._id} className={`user-item ${selected?._id === u._id ? 'active' : ''}`} onClick={() => openChat(u)}>
-                <div style={{ position: 'relative' }}>
-                  <div
-                    className="user-avatar"
-                    onClick={e => { e.stopPropagation(); openUserProfile(u); }}
-                    title="View profile"
-                  >
-                    {u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+              <div key={u._id} className={`chat-list-item-active flex items-center gap-4 p-4 rounded-2xl group cursor-pointer ${selected?._id === u._id ? 'bg-primary-container/10 border-l-4 border-primary' : 'hover:bg-surface-container-high'}`} onClick={() => openChat(u)}>
+                <div className="relative" onClick={e => { e.stopPropagation(); openUserProfile(u); }}>
+                  <div className="w-12 h-12 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-headline-sm overflow-hidden">
+                    {u.avatar ? <img src={u.avatar} alt="u" className="w-full h-full object-cover" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
                   </div>
-                  {isOnline && <div className="online-indicator" />}
+                  {isOnline && <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-surface rounded-full"></span>}
                 </div>
-                <div className="user-meta"><div className="user-name">{u.username || 'user'}</div></div>
-                {unread > 0 && <div className="badge">{unread > 99 ? '99+' : unread}</div>}
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-baseline">
+                    <p className="text-label-md font-label-md text-on-surface truncate">{u.username || 'user'}</p>
+                  </div>
+                </div>
+                {unread > 0 && <div className="bg-primary text-white text-[10px] font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unread > 99 ? '99+' : unread}</div>}
               </div>
             );
           })}
           {groups.length === 0 && acceptedUserList.length === 0 && (
-            <div className="empty-tab">
-              <div className="empty-icon">💬</div>
+            <div className="flex flex-col items-center justify-center h-48 text-on-surface-variant opacity-70">
+              <span className="material-symbols-outlined text-[40px] mb-2">chat</span>
               <div>No chats yet</div>
-              <div style={{ fontSize: '12px', marginTop: '4px' }}>Discover people in the Explore tab</div>
             </div>
           )}
-        </div>
+        </>
       );
     }
 
@@ -1298,17 +1316,6 @@ function Chat({ onLogout }) {
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-          <div style={{ padding: '0 8px 12px 0' }}>
-            <input 
-              type="text" 
-              placeholder="Search all users..." 
-              value={discoverSearch}
-              onChange={e => setDiscoverSearch(e.target.value)}
-              style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: '#fff', fontSize: '13px', outline: 'none', transition: 'border 0.2s', boxSizing: 'border-box' }}
-              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-              onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
-            />
-          </div>
           <div className="users-list" style={{ marginTop: 0, paddingRight: '4px', flex: 1, overflowY: 'auto' }}>
             {displayUsers.length === 0 ? (
               <div className="empty-tab">
@@ -1359,7 +1366,7 @@ function Chat({ onLogout }) {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className={`chat-root ${selected ? 'mobile-chat-open' : ''}`}>
+    <div className={`chat-root ${isLightMode ? 'light' : 'dark'}`}>
       {/* Toast */}
       {toast && (
         <div className={`toast toast-${toast.type}`}>{toast.msg}</div>
@@ -1372,330 +1379,364 @@ function Chat({ onLogout }) {
         </div>
       )}
 
-      {/* ─── SIDEBAR ─────────────────────────────────────────────────────── */}
-      <div className="sidebar">
-        <div className="sidebar-header">
-          <div className="avatar editable-avatar" style={{ cursor: 'pointer' }} title="View Profile">
-            <div onClick={openProfileModal} style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {localUser.avatar ? <img src={localUser.avatar} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : initials}
+      <div className="flex-1 flex h-screen w-full overflow-hidden text-body-md font-body-md bg-surface text-on-surface">
+        {/* SideNavBar Component */}
+        <aside className={`fixed left-0 top-0 h-full flex flex-col pb-8 w-64 bg-surface-container-low border-r border-outline-variant z-40 transition-all duration-300 ${sidebarCollapsed ? 'sidebar-collapsed' : ''} pt-0`} id="sidebar">
+          <div className="px-6 pt-2 pb-2 flex items-center justify-start">
+            <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+                <span className="material-symbols-outlined" data-icon="menu">menu</span>
+            </button>
+          </div>
+          <div className="px-6 mb-8 flex items-center gap-3 logo-container">
+            <div className="w-8 h-8 min-w-[32px] bg-primary rounded-lg flex items-center justify-center">
+                <span className="material-symbols-outlined text-white text-[20px]" data-icon="bolt">bolt</span>
             </div>
-            <div className="edit-overlay" onClick={e => { e.stopPropagation(); onAvatarClick(); }}>✎</div>
+            <span className="logo-text text-headline-sm font-headline-sm font-bold text-primary truncate">Nexus Chat</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-            <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
+          <div className="flex-1 space-y-1">
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'chats' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => setSidebarTab('chats')}>
+                <span className="material-symbols-outlined shrink-0" data-icon="chat" style={sidebarTab === 'chats' ? { fontVariationSettings: '"FILL" 1' } : {}}>chat</span>
+                <span className="nav-text text-label-md font-label-md truncate">Chats</span>
+            </a>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'requests' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => setSidebarTab('requests')}>
+                <span className="material-symbols-outlined shrink-0" data-icon="call">call</span>
+                <span className="nav-text text-label-md font-label-md truncate">Requests</span>
+                {requestBadgeCount > 0 && <span className="tab-badge bg-primary text-white rounded-full px-2 text-[10px] ml-auto">{requestBadgeCount}</span>}
+            </a>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'discover' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('discover'); loadSuggestions(); }}>
+                <span className="material-symbols-outlined shrink-0" data-icon="contacts">contacts</span>
+                <span className="nav-text text-label-md font-label-md truncate">Explore</span>
+            </a>
+            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={() => setShowGroupModal(true)}>
+                <span className="material-symbols-outlined shrink-0" data-icon="group_add">group_add</span>
+                <span className="nav-text text-label-md font-label-md truncate">Create Group</span>
+            </a>
+            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={openProfileModal}>
+                <span className="material-symbols-outlined shrink-0" data-icon="settings">settings</span>
+                <span className="nav-text text-label-md font-label-md truncate">Settings</span>
+            </a>
           </div>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} />
-          
-          <div className="sidebar-header-expandable">
-            <div className="user-stats">
-              <span
-                className="stat-link"
-                onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }}
-              >
-                <strong>{(localUser.following || []).length}</strong> Following
-              </span>
-              <span className="stat-dot">·</span>
-              <span
-                className="stat-link"
-                onClick={() => { setFollowModalTab('pending'); setShowFollowModal(true); }}
-              >
-                <strong>{(localUser.pendingFollowing || []).length}</strong> Pending
-              </span>
-              <span className="stat-dot">·</span>
-              <span
-                className="stat-link"
-                onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }}
-              >
-                <strong>{(localUser.followers || []).length}</strong> Followers
-              </span>
+          <div className="mt-auto px-4 space-y-2 pb-4">
+            <div className="px-2">
+                <button className="btn-interact w-full text-on-surface-variant hover:bg-surface-container-high rounded-xl py-2 flex items-center gap-3" onClick={() => setIsLightMode(!isLightMode)}>
+                    <span className="material-symbols-outlined text-[20px] shrink-0" data-icon={isLightMode ? 'dark_mode' : 'light_mode'}>{isLightMode ? 'dark_mode' : 'light_mode'}</span>
+                    <span className="btn-text text-label-md font-label-md truncate">{isLightMode ? 'Dark Mode' : 'Light Mode'}</span>
+                </button>
             </div>
-            <div className="sidebar-header-actions" style={{ display: 'flex', width: '100%', gap: '8px', marginTop: '10px' }}>
-              <button className="settings-btn" onClick={openProfileModal} title="Settings" style={{ flex: 1 }}>⚙ Settings</button>
-              <button className="logout-btn" onClick={logout} style={{ flex: 1 }}>Logout</button>
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="sidebar-tabs">
-          <button
-            className={`tab-btn ${sidebarTab === 'chats' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('chats')}
-          >
-            💬 Chats
-          </button>
-          <button
-            className={`tab-btn ${sidebarTab === 'requests' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('requests')}
-          >
-            📨 Requests
-            {requestBadgeCount > 0 && <span className="tab-badge">{requestBadgeCount}</span>}
-          </button>
-          <button
-            className={`tab-btn ${sidebarTab === 'discover' ? 'active' : ''}`}
-            onClick={() => { setSidebarTab('discover'); loadSuggestions(); }}
-          >
-            🔍 Explore
-          </button>
-        </div>
-
-        {/* Tab: Chats — has Create Group button */}
-        {sidebarTab === 'chats' && (
-          <div className="sidebar-actions">
-            <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Groups & Chats</span>
-            <button className="create-group-btn" onClick={() => setShowGroupModal(true)} title="Create Group">+</button>
-          </div>
-        )}
-
-        {renderSidebarContent()}
-      </div>
-
-      {/* ─── CHAT AREA ───────────────────────────────────────────────────── */}
-      <div className="chat-area">
-        {selected ? (
-          <>
-            <div className="chat-top">
-              <button
-                className="mobile-back-btn"
-                onClick={() => {
-                  if (isMobileViewport()) {
-                    window.history.back();
-                  } else {
-                    setSelected(null);
-                  }
-                }}
-                title="Back to chats"
-              >
-                ←
-              </button>
-              <div
-                className={`other-avatar ${selected.isGroup ? 'editable-avatar' : ''}`}
-                style={selected.isGroup ? { borderRadius: '8px', cursor: 'pointer' } : { cursor: 'pointer' }}
-                onClick={selected.isGroup ? onGroupAvatarClick : () => openUserProfile(selected)}
-                title={selected.isGroup ? "Change group icon" : "View profile"}
-              >
-                {selected.avatar ? <img src={selected.avatar} alt="u" style={{ borderRadius: 'inherit' }} /> : (selected.username || 'U').slice(0, 1).toUpperCase()}
-                {selected.isGroup && <div className="edit-overlay">✎</div>}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                {selected.isGroup && editingGroupId === selected._id ? (
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    <input
-                      value={editGroupNameStr}
-                      onChange={e => setEditGroupNameStr(e.target.value)}
-                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#fff', padding: '4px 8px', fontFamily: 'inherit' }}
-                    />
-                    <button onClick={updateGroupName} style={{ background: 'var(--accent)', border: 'none', borderRadius: '6px', color: '#022a24', padding: '4px 10px', cursor: 'pointer', fontWeight: 700 }}>Save</button>
-                    <button onClick={() => setEditingGroupId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}>✕</button>
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer'
-                    }}
-                    onClick={selected.isGroup ? openGroupDetails : () => openUserProfile(selected)}
-                    title={selected.isGroup ? 'View group details' : 'View user details'}
-                  >
-                    {selected.username || 'user1'}
-                    {selected.isGroup && (
-                      <button onClick={() => { setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '13px' }}>✎</button>
+            <div className="pt-2 border-t border-outline-variant">
+                <div className="flex items-center gap-3 px-2 py-2 cursor-pointer rounded-xl hover:bg-surface-container-high transition-colors" onClick={openProfileModal}>
+                    {localUser.avatar ? (
+                        <img alt="Active User" className="w-10 h-10 min-w-[40px] rounded-full object-cover border-2 border-primary/20" src={localUser.avatar} />
+                    ) : (
+                        <div className="w-10 h-10 min-w-[40px] rounded-full flex items-center justify-center bg-primary text-white font-bold border-2 border-primary/20">{initials}</div>
                     )}
-                  </div>
-                )}
-                {selected.isGroup && selected.members && (
-                  <div style={{ fontSize: '12px', color: 'var(--muted)', cursor: 'pointer' }} onClick={openGroupDetails} title="View group details">
-                    {selected.members
-                      .filter(Boolean)
-                      .map(m => (typeof m === 'string' ? usersById[String(m)]?.username || 'User' : (m.username || 'User')))
-                      .join(', ')}
-                  </div>
-                )}
-                {!selected.isGroup && (
-                  <div style={{ fontSize: '12px', color: onlineUsers[selected._id] ? '#10b981' : 'var(--muted)' }}>
-                    {onlineUsers[selected._id] ? 'Online' : 'Offline'}
-                  </div>
-                )}
-              </div>
+                    <div className="user-details overflow-hidden">
+                        <p className="text-label-md font-label-md text-on-surface truncate">{displayName}</p>
+                        <p className="text-label-sm font-label-sm text-primary">Active Now</p>
+                    </div>
+                </div>
+            </div>
+            <div className="pt-1 px-2">
+                <button className="btn-interact w-full text-on-surface-variant hover:text-error rounded-xl py-2 flex items-center gap-3" onClick={logout}>
+                    <span className="material-symbols-outlined text-[20px] shrink-0" data-icon="logout">logout</span>
+                    <span className="btn-text text-label-md font-label-md truncate">Logout</span>
+                </button>
+            </div>
+          </div>
+        </aside>
 
-              <div className="chat-header-menu">
-                <button
-                  className="options-btn header-options-btn"
-                  onClick={() => setOpenHeaderMenu(v => !v)}
-                  title="Chat options"
-                >⋮</button>
-                {openHeaderMenu && (
-                  <div className="options-menu">
-                    {!selected.isGroup && (
-                      <button
-                        onClick={() => {
-                          toggleFollow(selected._id);
-                          setOpenHeaderMenu(false);
-                        }}
-                      >
-                        {isFollowing(selected._id) ? 'Unfollow' : (hasPendingRequest(selected._id) ? 'Cancel Request' : 'Follow')}
+        {/* Main Content Area */}
+        <main className={`flex-1 ${sidebarCollapsed ? 'ml-20' : 'ml-64'} flex overflow-hidden transition-all duration-300`} id="main-content">
+          {/* Conversation List Column */}
+          <section className="w-80 lg:w-96 flex flex-col bg-surface-container-lowest border-r border-outline-variant">
+            <div className="p-6 pb-2">
+              <h2 className="text-headline-md font-headline-md text-on-surface mb-4">
+                {sidebarTab === 'chats' ? 'Messages' : sidebarTab === 'requests' ? 'Requests' : 'Explore'}
+              </h2>
+              <div className="relative mb-2">
+                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]" data-icon="search">search</span>
+                <input 
+                  className="input-focus-expand w-full bg-surface-container text-body-md font-body-md rounded-xl py-2.5 pl-10 pr-4 border-none focus:ring-2 focus:ring-primary/20 outline-none" 
+                  placeholder={sidebarTab === 'discover' ? "Search all users..." : "Search..."} 
+                  value={sidebarTab === 'discover' ? discoverSearch : ''} 
+                  onChange={e => sidebarTab === 'discover' && setDiscoverSearch(e.target.value)} 
+                  type="text" 
+                />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 space-y-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+              {renderSidebarContent()}
+            </div>
+          </section>
+
+          {/* Chat Window Column */}
+          <section className="flex-1 flex flex-col bg-surface overflow-hidden relative">
+            {selected ? (
+              <>
+                {/* TopNavBar Component */}
+                <header className="flex justify-between items-center w-full px-4 lg:px-8 h-16 bg-surface/80 backdrop-blur-xl border-b border-outline-variant sticky top-0 z-30 shadow-sm shrink-0">
+                  <div className="flex items-center gap-4">
+                    {isMobileViewport() && (
+                      <button className="btn-interact p-2 text-on-surface-variant rounded-lg" onClick={() => setSelected(null)}>
+                        <span className="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
                       </button>
                     )}
-                    {!selected.isGroup && (
-                      <button
-                        onClick={() => {
-                          blockUser(selected._id);
-                          setOpenHeaderMenu(false);
-                        }}
-                        style={{ color: '#ff6b6b' }}
-                      >
-                        Block
-                      </button>
+                    <div className="flex items-center gap-4 cursor-pointer" onClick={selected.isGroup ? openGroupDetails : () => openUserProfile(selected)}>
+                      <div className="relative">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container font-bold overflow-hidden">
+                          {selected.avatar ? <img alt="avatar" className="w-full h-full object-cover" src={selected.avatar} /> : (selected.username || 'U').slice(0, 1).toUpperCase()}
+                        </div>
+                        {!selected.isGroup && onlineUsers[selected._id] && (
+                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-surface rounded-full"></span>
+                        )}
+                      </div>
+                      <div>
+                        <h1 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2">
+                          {selected.username || 'User'}
+                          {selected.isGroup && <span className="text-[14px] text-on-surface-variant material-symbols-outlined" onClick={(e) => { e.stopPropagation(); setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }}>edit</span>}
+                        </h1>
+                        <p className={`text-label-sm font-label-sm ${onlineUsers[selected._id] ? 'text-primary' : 'text-on-surface-variant'}`}>
+                          {selected.isGroup ? `${(selected.members || []).length} members` : (onlineUsers[selected._id] ? 'Online' : 'Offline')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 relative">
+
+                    <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg hidden sm:block">
+                      <span className="material-symbols-outlined" data-icon="video_call">video_call</span>
+                    </button>
+                    <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg hidden sm:block">
+                      <span className="material-symbols-outlined" data-icon="call">call</span>
+                    </button>
+                    <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg" onClick={() => setOpenHeaderMenu(v => !v)}>
+                      <span className="material-symbols-outlined" data-icon="more_vert">more_vert</span>
+                    </button>
+                    
+                    {openHeaderMenu && (
+                      <div className="absolute top-12 right-0 bg-surface-container-highest shadow-lg rounded-xl overflow-hidden min-w-[150px] z-50 py-2 border border-outline-variant chat-header-menu">
+                        {!selected.isGroup && (
+                          <button className="w-full text-left px-4 py-2 hover:bg-surface-container-high text-body-md" onClick={() => { toggleFollow(selected._id); setOpenHeaderMenu(false); }}>
+                            {isFollowing(selected._id) ? 'Unfollow' : (hasPendingRequest(selected._id) ? 'Cancel Request' : 'Follow')}
+                          </button>
+                        )}
+                        {!selected.isGroup && (
+                          <button className="w-full text-left px-4 py-2 hover:bg-surface-container-high text-body-md text-error" onClick={() => { blockUser(selected._id); setOpenHeaderMenu(false); }}>
+                            Block
+                          </button>
+                        )}
+                        <button className="w-full text-left px-4 py-2 hover:bg-surface-container-high text-body-md text-error" onClick={() => { setShowClearModal(true); setOpenHeaderMenu(false); }}>
+                          Clear chat
+                        </button>
+                      </div>
                     )}
-                    <button
-                      onClick={() => {
-                        setShowClearModal(true);
-                        setOpenHeaderMenu(false);
-                      }}
-                    >
-                      Clear chat
+                  </div>
+                </header>
+
+                {/* Messages Thread */}
+                <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 flex flex-col relative">
+                  {visibleMessages.length === 0 ? (
+                    <div className="m-auto text-center text-on-surface-variant">
+                      <div className="material-symbols-outlined text-[48px] opacity-50 mb-2">chat_bubble</div>
+                      <p>No messages here yet.</p>
+                    </div>
+                  ) : (
+                    visibleMessages.map((m, i, arr) => {
+                      const isMe = m.from === user._id;
+                      const timeStr = formatTime(m.createdAt || new Date());
+                      let showTime = false;
+                      if (i === 0) { showTime = true; }
+                      else {
+                        const prev = arr[i - 1];
+                        if (formatTime(prev.createdAt || new Date()) !== timeStr) { showTime = true; }
+                      }
+
+                      return (
+                        <React.Fragment key={m._id || i}>
+                          {showTime && (
+                            <div className="flex justify-center my-4 message-entry">
+                              <span className="px-3 py-1 bg-surface-container text-label-sm font-label-sm text-on-surface-variant rounded-full tracking-wider">{timeStr}</span>
+                            </div>
+                          )}
+                          <div className={`flex flex-col ${isMe ? 'items-end self-end' : 'items-start'} max-w-[85%] lg:max-w-[70%] message-entry`}>
+                            {!isMe && selected.isGroup && (
+                              <div className="text-label-sm font-label-sm text-on-surface-variant ml-12 mb-1">
+                                {usersById[String(m.from)]?.username || 'User'}
+                              </div>
+                            )}
+                            <div className={`flex items-end gap-2 ${isMe ? 'justify-end flex-row-reverse' : ''} relative group/msg`}>
+                              {!isMe && (
+                                <div className="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center text-sm font-bold shrink-0 overflow-hidden cursor-pointer" onClick={() => openUserProfile(m.from)}>
+                                  {usersById[String(m.from)]?.avatar ? <img src={usersById[String(m.from)].avatar} alt="u" className="w-full h-full object-cover" /> : (usersById[String(m.from)]?.username || 'U').slice(0, 1).toUpperCase()}
+                                </div>
+                              )}
+                              
+                              <div className="flex flex-col gap-1">
+                                {m.replyTo && (
+                                  <div className="text-xs bg-surface-variant text-on-surface-variant p-2 rounded-lg opacity-80 border-l-2 border-primary mb-1">
+                                    <div className="font-bold">{m.replyTo.from === user._id ? 'You' : (usersById[String(m.replyTo.from)]?.username || selected?.username || 'User')}</div>
+                                    <div className="truncate max-w-xs">{m.replyTo.message ? m.replyTo.message : (m.replyTo.media ? 'Attachment' : '')}</div>
+                                  </div>
+                                )}
+
+                                <div className={`${isMe ? 'bg-primary text-on-primary rounded-2xl rounded-br-none' : 'bg-surface-container-high text-on-surface rounded-2xl rounded-bl-none'} p-3 lg:p-4 shadow-sm hover:shadow-md transition-shadow relative`}>
+                                  {m.isForwarded && <div className="text-[10px] italic opacity-70 mb-1 flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">forward</span> Forwarded</div>}
+                                  
+                                  {m.media && (
+                                    <div className="mb-2">
+                                      {m.media.type?.startsWith('image/') ? (
+                                        <img src={getMediaSrc(m.media)} alt="media" className="max-w-[200px] lg:max-w-[300px] rounded-lg cursor-zoom-in" onClick={() => setViewImageUrl(getMediaSrc(m.media))} />
+                                      ) : m.media.type?.startsWith('video/') ? (
+                                        <video controls className="max-w-[200px] lg:max-w-[300px] rounded-lg">
+                                          <source src={getMediaSrc(m.media)} type={m.media.type} />
+                                        </video>
+                                      ) : m.media.type?.startsWith('audio/') ? (
+                                        <audio controls className="max-w-[200px] lg:max-w-[300px]">
+                                          <source src={getMediaSrc(m.media)} type={m.media.type} />
+                                        </audio>
+                                      ) : (
+                                        <a href={getMediaSrc(m.media)} download={m.media.name} className="flex items-center gap-2 bg-black/10 p-2 rounded-lg hover:bg-black/20 transition">
+                                          <span className="material-symbols-outlined">description</span> {m.media.name}
+                                        </a>
+                                      )}
+                                    </div>
+                                  )}
+                                  
+                                  {m.message && <p className="text-body-md font-body-md whitespace-pre-wrap break-words">{m.message}</p>}
+                                </div>
+                              </div>
+
+                              <span className="text-[10px] font-label-sm text-on-surface-variant mb-1 shrink-0 px-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                                {formatTime(m.createdAt)}
+                              </span>
+
+                              <div className={`absolute top-0 ${isMe ? '-left-8' : '-right-8'} opacity-0 group-hover/msg:opacity-100 transition-opacity z-10`}>
+                                <button className="p-1 text-on-surface-variant hover:text-primary rounded-full bg-surface shadow-sm" onClick={() => setOpenMenuId(openMenuId === (m._id || i) ? null : (m._id || i))}>
+                                  <span className="material-symbols-outlined text-[16px]">more_vert</span>
+                                </button>
+                                {openMenuId === (m._id || i) && (
+                                  <div className="absolute top-6 left-0 bg-surface-container-highest shadow-lg rounded-xl overflow-hidden min-w-[120px] z-20 py-1 border border-outline-variant message-options">
+                                    <button className="w-full text-left px-3 py-1.5 hover:bg-surface-container-high text-xs" onClick={() => { setReplyingTo(m); setOpenMenuId(null); }}>Reply</button>
+                                    <button className="w-full text-left px-3 py-1.5 hover:bg-surface-container-high text-xs" onClick={() => { openForwardModal(m); setOpenMenuId(null); }}>Forward</button>
+                                    {isMe && <button className="w-full text-left px-3 py-1.5 hover:bg-surface-container-high text-xs" onClick={() => { setEditingMessage(m); setMsg(m.message); setOpenMenuId(null); }}>Edit</button>}
+                                    <button className="w-full text-left px-3 py-1.5 hover:bg-surface-container-high text-xs text-error" onClick={() => { setShowDeleteModal(m); setOpenMenuId(null); }}>Delete</button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            {isMe && (
+                              <div className="flex items-center gap-1 mt-1 mr-1">
+                                {m.isEdited && <span className="text-[10px] italic text-on-surface-variant mr-1">Edited</span>}
+                                <span className="text-[10px] font-label-sm text-primary">{m.seen ? 'Read' : 'Sent'}</span>
+                                <span className="material-symbols-outlined text-[12px] text-primary" data-icon={m.seen ? 'done_all' : 'check'}>{m.seen ? 'done_all' : 'check'}</span>
+                              </div>
+                            )}
+                          </div>
+                        </React.Fragment>
+                      );
+                    })
+                  )}
+                  
+                  {typingUser === selected._id && (
+                    <div className="flex items-center gap-2 text-on-surface-variant text-sm italic animation-slide-up-fade">
+                      <div className="flex gap-1">
+                        <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce"></span>
+                        <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></span>
+                        <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+                      </div>
+                      {selected.username || 'User'} is typing...
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Input Field */}
+                <footer className="p-4 lg:p-6 bg-surface-container-lowest border-t border-outline-variant shrink-0">
+                  {replyingTo && (
+                    <div className="flex items-center justify-between bg-surface-variant p-2 px-4 rounded-xl mb-3 text-sm">
+                      <div className="truncate">
+                        <span className="font-bold text-primary mr-2">Replying to {replyingTo.from === user._id ? 'yourself' : (usersById[String(replyingTo.from)]?.username || 'User')}</span>
+                        <span className="text-on-surface-variant">{replyingTo.message || 'Attachment'}</span>
+                      </div>
+                      <button className="text-on-surface-variant hover:text-error shrink-0 ml-2" onClick={() => setReplyingTo(null)}>
+                        <span className="material-symbols-outlined text-[18px]">close</span>
+                      </button>
+                    </div>
+                  )}
+                  {selectedMedia && (
+                    <div className="flex items-center justify-between bg-surface-variant p-2 px-4 rounded-xl mb-3 text-sm">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="material-symbols-outlined">attachment</span>
+                        <span>{selectedMedia.name}</span>
+                      </div>
+                      <button className="text-on-surface-variant hover:text-error shrink-0 ml-2" onClick={() => setSelectedMedia(null)}>
+                        <span className="material-symbols-outlined text-[18px]">close</span>
+                      </button>
+                    </div>
+                  )}
+                  {editingMessage && (
+                    <div className="flex items-center justify-between bg-surface-variant p-2 px-4 rounded-xl mb-3 text-sm border border-primary/30">
+                      <div className="truncate">
+                        <span className="font-bold text-primary mr-2">Editing message</span>
+                      </div>
+                      <button className="text-on-surface-variant hover:text-error shrink-0 ml-2" onClick={() => { setEditingMessage(null); setMsg(""); }}>
+                        <span className="material-symbols-outlined text-[18px]">close</span>
+                      </button>
+                    </div>
+                  )}
+                  <div className="max-w-max-width-chat mx-auto relative flex items-center gap-2 lg:gap-3">
+                    <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-full" onClick={onMediaBtnClick} title="Attach file">
+                      <span className="material-symbols-outlined" data-icon="attach_file">attach_file</span>
+                    </button>
+                    <input ref={mediaFileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={onMediaFile} />
+                    
+                    <div className="flex-1 relative group">
+                      <input 
+                        className="input-focus-expand w-full bg-surface-container-low text-body-md lg:text-body-lg font-body-lg px-4 lg:px-6 py-3 lg:py-4 rounded-2xl border-b-2 border-transparent focus:border-primary focus:ring-0 outline-none shadow-sm" 
+                        placeholder={editingMessage ? "Edit message..." : "Type a message..."} 
+                        type="text" 
+                        value={msg} 
+                        onChange={handleTyping} 
+                        onKeyDown={onKeyDown}
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        <button className="btn-interact p-2 text-on-surface-variant hover:text-primary" onClick={() => setShowEmojiPicker(!showEmojiPicker)} title="Add emoji">
+                          <span className="material-symbols-outlined" data-icon="sentiment_satisfied">sentiment_satisfied</span>
+                        </button>
+                      </div>
+                      {showEmojiPicker && (
+                        <div className="absolute bottom-[110%] right-0 z-50 shadow-2xl rounded-2xl overflow-hidden">
+                          <EmojiPicker 
+                            theme={isLightMode ? 'light' : 'dark'} 
+                            onEmojiClick={(emojiObject) => setMsg(prev => prev + emojiObject.emoji)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <button className="btn-interact w-10 h-10 lg:w-12 lg:h-12 bg-primary text-on-primary rounded-full flex items-center justify-center shadow-lg hover:shadow-primary/30 shrink-0" onClick={send}>
+                      <span className="material-symbols-outlined" data-icon="send" style={{ fontVariationSettings: '"FILL" 1' }}>send</span>
                     </button>
                   </div>
-                )}
-              </div>
-            </div>
-
-            <div className="messages">
-              {visibleMessages
-                .map((m, i, arr) => {
-                  const timeStr = formatTime(m.createdAt || new Date());
-                  let showName = false, showTime = false;
-                  if (i === 0) { showName = selected.isGroup && m.from !== user._id; showTime = true; }
-                  else {
-                    const prev = arr[i - 1];
-                    const prevTimeStr = formatTime(prev.createdAt || new Date());
-                    if (prev.from !== m.from) { showName = selected.isGroup && m.from !== user._id; showTime = true; }
-                    else if (timeStr !== prevTimeStr) { showTime = true; }
-                  }
-                  return (
-                    <div key={m._id || i} className={`message ${m.from === user._id ? 'sent' : 'received'}`}>
-                      {m.from === user._id && (
-                        <div className="message-options">
-                          <button className="options-btn" onClick={() => setOpenMenuId(openMenuId === (m._id || i) ? null : (m._id || i))}>⋮</button>
-                          {openMenuId === (m._id || i) && (
-                            <div className="options-menu">
-                              <button onClick={() => { setEditingMessage(m); setMsg(m.message); setOpenMenuId(null); }}>Edit</button>
-                              <button onClick={() => { setShowDeleteModal(m); setOpenMenuId(null); }}>Delete</button>
-                              <button onClick={() => { setReplyingTo(m); setOpenMenuId(null); }}>Reply</button>
-                              <button onClick={() => openForwardModal(m)}>Forward</button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: m.from === user._id ? 'flex-end' : 'flex-start', maxWidth: '75%' }}>
-                        {showTime && (
-                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginLeft: m.from === user._id ? '0' : '12px', marginRight: m.from === user._id ? '12px' : '0', marginBottom: '4px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                            {showName && <span>{usersById[String(m.from)]?.username || 'User'}</span>}
-                            {showName && <span>•</span>}
-                            <span>{timeStr}</span>
-                          </div>
-                        )}
-                        <div className={`bubble ${m.from === user._id ? 'sent' : 'received'}`} style={{ maxWidth: '100%' }}>
-                          {m.isForwarded && (
-                            <div className="forwarded-tag">Forwarded</div>
-                          )}
-                          {m.replyTo && (
-                            <div className="replied-snippet">
-                              <div className="replied-from">
-                                {m.replyTo.from === user._id ? 'You' : (usersById[String(m.replyTo.from)]?.username || selected?.username || 'User')}
-                              </div>
-                              <div className="replied-text">{m.replyTo.message ? m.replyTo.message : (m.replyTo.media ? 'Attachment' : '')}</div>
-                            </div>
-                          )}
-                          {m.media ? (
-                            <div>
-                              {m.media.type?.startsWith('image/') ? (
-                                <img
-                                  src={getMediaSrc(m.media)}
-                                  alt="media"
-                                  style={{ maxWidth: '300px', maxHeight: '400px', borderRadius: '8px', cursor: 'zoom-in' }}
-                                  onClick={() => setViewImageUrl(getMediaSrc(m.media))}
-                                />
-                              ) : m.media.type?.startsWith('video/') ? (
-                                <video controls style={{ maxWidth: '300px', borderRadius: '8px' }}>
-                                  <source src={getMediaSrc(m.media)} type={m.media.type} />
-                                </video>
-                              ) : m.media.type?.startsWith('audio/') ? (
-                                <audio controls style={{ maxWidth: '300px' }}>
-                                  <source src={getMediaSrc(m.media)} type={m.media.type} />
-                                </audio>
-                              ) : (
-                                <a href={getMediaSrc(m.media)} download={m.media.name} style={{ color: '#6ee7b7', textDecoration: 'underline' }}>📁 {m.media.name}</a>
-                              )}
-                              {m.message && <div style={{ marginTop: '6px' }}>{m.message}</div>}
-                            </div>
-                          ) : m.message}
-                          <div className="meta">
-                            {m.isEdited && <span style={{ fontStyle: 'italic', marginRight: '5px' }}>Edited</span>}
-                            {m.from === user._id ? (m.seen ? 'Seen' : 'Sent') : ''}
-                          </div>
-                        </div>
-                      </div>
-                      {m.from !== user._id && (
-                        <div className="message-options">
-                          <button className="options-btn" onClick={() => setOpenMenuId(openMenuId === (m._id || i) ? null : (m._id || i))}>⋮</button>
-                          {openMenuId === (m._id || i) && (
-                            <div className="options-menu">
-                              <button onClick={() => { setShowDeleteModal(m); setOpenMenuId(null); }}>Delete</button>
-                              <button onClick={() => { setReplyingTo(m); setOpenMenuId(null); }}>Reply</button>
-                              <button onClick={() => openForwardModal(m)}>Forward</button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              {typingUser === selected._id && (
-                <div className="typing-indicator" style={{ color: '#6ee7b7', fontSize: '12px', padding: '10px', fontStyle: 'italic', animation: 'fadeInUp 0.3s forwards' }}>
-                  {selected.username || 'user'} is typing...
+                </footer>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-surface">
+                <div className="w-24 h-24 bg-primary-container rounded-3xl flex items-center justify-center mb-6 shadow-lg shadow-primary/20 animate-slide-up-fade">
+                  <span className="material-symbols-outlined text-[48px] text-on-primary" style={{ fontVariationSettings: '"FILL" 1' }}>bolt</span>
                 </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <div className="input-area" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-              {replyingTo && (
-                <div className="replying-indicator">
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 600, marginBottom: '2px' }}>
-                      Replying to {replyingTo.from === user._id ? 'yourself' : (users.find(u => u._id === replyingTo.from)?.username || selected?.username || 'User')}
-                    </div>
-                    <span>{replyingTo.message ? replyingTo.message : (replyingTo.media ? 'Attachment' : '')}</span>
-                  </div>
-                  <button className="close-reply" onClick={() => setReplyingTo(null)}>✖</button>
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: '8px', width: '100%', alignItems: 'flex-end' }}>
-                <textarea value={msg} onChange={handleTyping} onKeyDown={onKeyDown} placeholder="Type a message..." />
-                <button className="media-btn" onClick={onMediaBtnClick} title="Send media">📎</button>
-                <input ref={mediaFileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={onMediaFile} />
-                {selectedMedia && <div className="media-preview">📤 {selectedMedia.name}</div>}
-                <button className="send-button" onClick={send}>Send</button>
+                <h2 className="text-headline-lg font-headline-lg text-on-surface mb-2 animate-slide-up-fade" style={{ animationDelay: '0.1s' }}>Welcome, {displayName}!</h2>
+                <p className="text-body-lg font-body-lg text-on-surface-variant max-w-md animate-slide-up-fade" style={{ animationDelay: '0.2s' }}>
+                  {acceptedUserList.length === 0
+                    ? 'Head to Explore to find and connect with people.'
+                    : 'Select a chat from the sidebar to start messaging.'}
+                </p>
               </div>
-            </div>
-            <input ref={groupFileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onGroupFile} />
-          </>
-        ) : (
-          <div className="welcome-screen">
-            <div className="welcome-icon">💎</div>
-            <div className="welcome-title">Welcome, {displayName}!</div>
-            <div className="welcome-sub">
-              {acceptedUserList.length === 0
-                ? 'Head to Explore to find and connect with people.'
-                : 'Select a chat to start messaging.'}
-            </div>
-          </div>
-        )}
+            )}
+          </section>
+        </main>
       </div>
+
+      {/* ─── MODALS ──────────────────────────────────────────────────────── */}
 
       {/* ─── MODALS ──────────────────────────────────────────────────────── */}
 
