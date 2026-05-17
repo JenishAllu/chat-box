@@ -83,7 +83,7 @@ function Chat({ onLogout }) {
   const [openHeaderMenu, setOpenHeaderMenu] = useState(false);
   const [isLightMode, setIsLightMode] = useState(true);
   const [showNavMenu, setShowNavMenu] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => isMobileViewport());
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   useEffect(() => {
@@ -1106,7 +1106,12 @@ function Chat({ onLogout }) {
   };
 
   useEffect(() => {
-    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (messagesEndRef.current && messagesEndRef.current.parentNode) {
+      messagesEndRef.current.parentNode.scrollTo({
+        top: messagesEndRef.current.parentNode.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
   }, [messages]);
 
   const logout = () => {
@@ -1379,9 +1384,16 @@ function Chat({ onLogout }) {
         </div>
       )}
 
-      <div className="flex-1 flex h-screen w-full overflow-hidden text-body-md font-body-md bg-surface text-on-surface">
+    <div className="fixed inset-0 flex w-full overflow-hidden text-body-md font-body-md bg-surface text-on-surface">
+        {/* Mobile Sidebar Overlay Backdrop */}
+        {!sidebarCollapsed && (
+          <div 
+            className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm" 
+            onClick={() => setSidebarCollapsed(true)} 
+          />
+        )}
         {/* SideNavBar Component */}
-        <aside className={`fixed left-0 top-0 h-full flex flex-col pb-8 w-64 bg-surface-container-low border-r border-outline-variant z-40 transition-all duration-300 ${sidebarCollapsed ? 'sidebar-collapsed' : ''} pt-0`} id="sidebar">
+        <aside className={`fixed left-0 top-0 h-full flex flex-col pb-8 w-64 bg-surface-container-low border-r border-outline-variant z-50 transition-all duration-300 ${sidebarCollapsed ? 'sidebar-collapsed -translate-x-full md:translate-x-0' : 'translate-x-0'} pt-0`} id="sidebar">
           <div className="px-6 pt-2 pb-2 flex items-center justify-start">
             <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
                 <span className="material-symbols-outlined" data-icon="menu">menu</span>
@@ -1394,37 +1406,37 @@ function Chat({ onLogout }) {
             <span className="logo-text text-headline-sm font-headline-sm font-bold text-primary truncate">Nexus Chat</span>
           </div>
           <div className="flex-1 space-y-1">
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'chats' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => setSidebarTab('chats')}>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'chats' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('chats'); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="chat" style={sidebarTab === 'chats' ? { fontVariationSettings: '"FILL" 1' } : {}}>chat</span>
                 <span className="nav-text text-label-md font-label-md truncate">Chats</span>
             </a>
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'requests' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => setSidebarTab('requests')}>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'requests' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('requests'); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="call">call</span>
                 <span className="nav-text text-label-md font-label-md truncate">Requests</span>
                 {requestBadgeCount > 0 && <span className="tab-badge bg-primary text-white rounded-full px-2 text-[10px] ml-auto">{requestBadgeCount}</span>}
             </a>
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'discover' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('discover'); loadSuggestions(); }}>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'discover' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('discover'); loadSuggestions(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="contacts">contacts</span>
                 <span className="nav-text text-label-md font-label-md truncate">Explore</span>
             </a>
-            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={() => setShowGroupModal(true)}>
+            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={() => { setShowGroupModal(true); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="group_add">group_add</span>
                 <span className="nav-text text-label-md font-label-md truncate">Create Group</span>
             </a>
-            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={openProfileModal}>
+            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={() => { openProfileModal(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="settings">settings</span>
                 <span className="nav-text text-label-md font-label-md truncate">Settings</span>
             </a>
           </div>
           <div className="mt-auto px-4 space-y-2 pb-4">
             <div className="px-2">
-                <button className="btn-interact w-full text-on-surface-variant hover:bg-surface-container-high rounded-xl py-2 flex items-center gap-3" onClick={() => setIsLightMode(!isLightMode)}>
+                <button className="btn-interact w-full text-on-surface-variant hover:bg-surface-container-high rounded-xl py-2 flex items-center gap-3" onClick={() => { setIsLightMode(!isLightMode); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                     <span className="material-symbols-outlined text-[20px] shrink-0" data-icon={isLightMode ? 'dark_mode' : 'light_mode'}>{isLightMode ? 'dark_mode' : 'light_mode'}</span>
                     <span className="btn-text text-label-md font-label-md truncate">{isLightMode ? 'Dark Mode' : 'Light Mode'}</span>
                 </button>
             </div>
             <div className="pt-2 border-t border-outline-variant">
-                <div className="flex items-center gap-3 px-2 py-2 cursor-pointer rounded-xl hover:bg-surface-container-high transition-colors" onClick={openProfileModal}>
+                <div className="flex items-center gap-3 px-2 py-2 cursor-pointer rounded-xl hover:bg-surface-container-high transition-colors" onClick={() => { openProfileModal(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                     {localUser.avatar ? (
                         <img alt="Active User" className="w-10 h-10 min-w-[40px] rounded-full object-cover border-2 border-primary/20" src={localUser.avatar} />
                     ) : (
@@ -1437,7 +1449,7 @@ function Chat({ onLogout }) {
                 </div>
             </div>
             <div className="pt-1 px-2">
-                <button className="btn-interact w-full text-on-surface-variant hover:text-error rounded-xl py-2 flex items-center gap-3" onClick={logout}>
+                <button className="btn-interact w-full text-on-surface-variant hover:text-error rounded-xl py-2 flex items-center gap-3" onClick={() => { logout(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                     <span className="material-symbols-outlined text-[20px] shrink-0" data-icon="logout">logout</span>
                     <span className="btn-text text-label-md font-label-md truncate">Logout</span>
                 </button>
@@ -1446,13 +1458,21 @@ function Chat({ onLogout }) {
         </aside>
 
         {/* Main Content Area */}
-        <main className={`flex-1 ${sidebarCollapsed ? 'ml-20' : 'ml-64'} flex overflow-hidden transition-all duration-300`} id="main-content">
+        <main className={`flex-1 ${sidebarCollapsed ? 'ml-0 md:ml-20' : 'ml-0 md:ml-64'} flex overflow-hidden transition-all duration-300`} id="main-content">
           {/* Conversation List Column */}
-          <section className="w-80 lg:w-96 flex flex-col bg-surface-container-lowest border-r border-outline-variant">
-            <div className="p-6 pb-2">
-              <h2 className="text-headline-md font-headline-md text-on-surface mb-4">
-                {sidebarTab === 'chats' ? 'Messages' : sidebarTab === 'requests' ? 'Requests' : 'Explore'}
-              </h2>
+          <section className={`w-full md:w-80 lg:w-96 flex-col bg-surface-container-lowest border-r border-outline-variant ${selected ? 'hidden md:flex' : 'flex'}`}>
+            <div className="p-6 pb-2 shrink-0">
+              <div className="flex items-center gap-3 mb-4">
+                <button 
+                  className="md:hidden btn-interact p-2 -ml-2 text-on-surface-variant hover:bg-surface-container rounded-lg" 
+                  onClick={() => setSidebarCollapsed(false)}
+                >
+                  <span className="material-symbols-outlined">menu</span>
+                </button>
+                <h2 className="text-headline-md font-headline-md text-on-surface m-0">
+                  {sidebarTab === 'chats' ? 'Messages' : sidebarTab === 'requests' ? 'Requests' : 'Explore'}
+                </h2>
+              </div>
               <div className="relative mb-2">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]" data-icon="search">search</span>
                 <input 
@@ -1464,25 +1484,23 @@ function Chat({ onLogout }) {
                 />
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto px-2 space-y-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+            <div className="flex-1 overflow-y-auto px-2 space-y-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch' }}>
               {renderSidebarContent()}
             </div>
           </section>
 
           {/* Chat Window Column */}
-          <section className="flex-1 flex flex-col bg-surface overflow-hidden relative">
+          <section className={`flex-1 flex-col bg-surface overflow-hidden relative ${selected ? 'flex' : 'hidden md:flex'}`}>
             {selected ? (
               <>
                 {/* TopNavBar Component */}
                 <header className="flex justify-between items-center w-full px-4 lg:px-8 h-16 bg-surface/80 backdrop-blur-xl border-b border-outline-variant sticky top-0 z-30 shadow-sm shrink-0">
-                  <div className="flex items-center gap-4">
-                    {isMobileViewport() && (
-                      <button className="btn-interact p-2 text-on-surface-variant rounded-lg" onClick={() => setSelected(null)}>
-                        <span className="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
-                      </button>
-                    )}
-                    <div className="flex items-center gap-4 cursor-pointer" onClick={selected.isGroup ? openGroupDetails : () => openUserProfile(selected)}>
-                      <div className="relative">
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <button className="md:hidden btn-interact p-2 text-on-surface-variant rounded-lg shrink-0" onClick={() => setSelected(null)}>
+                      <span className="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
+                    </button>
+                    <div className="flex items-center gap-4 cursor-pointer flex-1 min-w-0" onClick={selected.isGroup ? openGroupDetails : () => openUserProfile(selected)}>
+                      <div className="relative shrink-0">
                         <div className="w-10 h-10 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container font-bold overflow-hidden">
                           {selected.avatar ? <img alt="avatar" className="w-full h-full object-cover" src={selected.avatar} /> : (selected.username || 'U').slice(0, 1).toUpperCase()}
                         </div>
@@ -1490,12 +1508,12 @@ function Chat({ onLogout }) {
                           <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-surface rounded-full"></span>
                         )}
                       </div>
-                      <div>
-                        <h1 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2">
-                          {selected.username || 'User'}
-                          {selected.isGroup && <span className="text-[14px] text-on-surface-variant material-symbols-outlined" onClick={(e) => { e.stopPropagation(); setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }}>edit</span>}
+                      <div className="flex-1 min-w-0">
+                        <h1 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2 truncate">
+                          <span className="truncate">{selected.username || 'User'}</span>
+                          {selected.isGroup && <span className="text-[14px] text-on-surface-variant material-symbols-outlined shrink-0" onClick={(e) => { e.stopPropagation(); setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }}>edit</span>}
                         </h1>
-                        <p className={`text-label-sm font-label-sm ${onlineUsers[selected._id] ? 'text-primary' : 'text-on-surface-variant'}`}>
+                        <p className={`text-label-sm font-label-sm truncate ${onlineUsers[selected._id] ? 'text-primary' : 'text-on-surface-variant'}`}>
                           {selected.isGroup ? `${(selected.members || []).length} members` : (onlineUsers[selected._id] ? 'Online' : 'Offline')}
                         </p>
                       </div>
@@ -1534,7 +1552,7 @@ function Chat({ onLogout }) {
                 </header>
 
                 {/* Messages Thread */}
-                <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 flex flex-col relative">
+                <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 flex flex-col relative min-h-0">
                   {visibleMessages.length === 0 ? (
                     <div className="m-auto text-center text-on-surface-variant">
                       <div className="material-symbols-outlined text-[48px] opacity-50 mb-2">chat_bubble</div>
@@ -1700,7 +1718,7 @@ function Chat({ onLogout }) {
                         onKeyDown={onKeyDown}
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                        <button className="btn-interact p-2 text-on-surface-variant hover:text-primary" onClick={() => setShowEmojiPicker(!showEmojiPicker)} title="Add emoji">
+                        <button className="hidden md:flex btn-interact p-2 text-on-surface-variant hover:text-primary" onClick={() => setShowEmojiPicker(!showEmojiPicker)} title="Add emoji">
                           <span className="material-symbols-outlined" data-icon="sentiment_satisfied">sentiment_satisfied</span>
                         </button>
                       </div>
