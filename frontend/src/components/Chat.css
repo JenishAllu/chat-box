@@ -1216,9 +1216,9 @@ body {
 
 .profile-modal {
   position: relative;
-  width: 420px;
+  width: 480px;
   max-width: 95vw;
-  max-height: 92vh;
+  max-height: 85vh;
   overflow-y: auto;
   padding: 0;
   border-radius: 20px;

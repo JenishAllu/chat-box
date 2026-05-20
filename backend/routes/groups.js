@@ -4,9 +4,9 @@ const mongoose = require('mongoose');
 
 function populateGroup(query) {
   return query
-    .populate('members', 'username avatar')
-    .populate('admin', 'username avatar')
-    .populate('admins', 'username avatar');
+    .populate('members', 'username displayName avatar')
+    .populate('admin', 'username displayName avatar')
+    .populate('admins', 'username displayName avatar');
 }
 
 function getAdminIds(group) {

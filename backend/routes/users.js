@@ -37,10 +37,62 @@ async function resolveLatestPendingHistory(targetId, requesterId, status) {
   }
 }
 
-// GET all users (excluding password)
-router.get("/", async (req, res) => {
-  const users = await User.find().select("-password");
-  res.json(users);
+// GET user by ID
+router.get("/:id", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select("-password");
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to get user" });
+  }
+});
+
+// GET accepted chats for a user
+router.get("/:id/accepted-chats", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).populate('acceptedChats', '-password');
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user.acceptedChats || []);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load accepted chats" });
+  }
+});
+
+// GET chat requests for a user
+router.get("/:id/chat-requests", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).populate('chatRequests', '-password');
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user.chatRequests || []);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load chat requests" });
+  }
+});
+
+// GET search users
+router.get("/search", async (req, res) => {
+  try {
+    const query = req.query.q;
+    const excludeId = req.query.excludeId;
+    if (!query) return res.json([]);
+    const regex = new RegExp(query, 'i');
+    
+    const filter = {
+      $or: [{ username: regex }, { displayName: regex }]
+    };
+    if (excludeId) {
+      filter._id = { $ne: excludeId };
+    }
+    
+    const users = await User.find(filter).select("-password").limit(50);
+    res.json(users);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Search failed" });
+  }
 });
 
 // GET user suggestions (users not followed, not blocked, not self)

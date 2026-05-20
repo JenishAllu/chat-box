@@ -81,12 +81,16 @@ function Chat({ onLogout }) {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [openMenuId, setOpenMenuId] = useState(null);
   const [openHeaderMenu, setOpenHeaderMenu] = useState(false);
-  const [isLightMode, setIsLightMode] = useState(true);
+  const [isLightMode, setIsLightMode] = useState(() => {
+    const saved = localStorage.getItem('chat_theme');
+    return saved ? saved === 'light' : true;
+  });
   const [showNavMenu, setShowNavMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => isMobileViewport());
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   useEffect(() => {
+    localStorage.setItem('chat_theme', isLightMode ? 'light' : 'dark');
     if (isLightMode) {
       document.body.classList.add('light-theme-body');
       document.documentElement.classList.remove('dark');
@@ -121,6 +125,16 @@ function Chat({ onLogout }) {
   // ─── Sidebar tab ──────────────────────────────────────────────────────────
   const [sidebarTab, setSidebarTab] = useState('chats'); // 'chats' | 'requests' | 'discover'
   const [discoverSearch, setDiscoverSearch] = useState('');
+  const [discoverSearchResults, setDiscoverSearchResults] = useState([]);
+  const [expandedSections, setExpandedSections] = useState({
+    messageRequests: false,
+    pendingRequests: false,
+    followBack: false
+  });
+
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
 
   // ─── Group modal ──────────────────────────────────────────────────────────
   const [showGroupModal, setShowGroupModal] = useState(false);
@@ -136,6 +150,7 @@ function Chat({ onLogout }) {
 
   // ─── Profile modal ──────────────────────────────────────────────────────────
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileModalMode, setProfileModalMode] = useState('profile'); // 'profile' | 'settings'
   const [viewingUser, setViewingUser] = useState(null);
   const [profileEditMode, setProfileEditMode] = useState(false);
   const [profileDraft, setProfileDraft] = useState({ displayName: '', bio: '' });
@@ -167,11 +182,6 @@ function Chat({ onLogout }) {
       ...messageRequests.map(item => String(item?.from?._id || item?.from || ''))
     ]).size;
   }, [chatRequests, messageRequests]);
-  const usersById = useMemo(() => {
-    const map = {};
-    users.forEach(u => { map[String(u._id)] = u; });
-    return map;
-  }, [users]);
 
   const selectedGroupAdminIds = useMemo(() => {
     if (!selected?.isGroup) return [];
@@ -317,15 +327,11 @@ function Chat({ onLogout }) {
   };
 
   const loadChatRequests = async (currentUser) => {
-    // chatRequests is an array of user IDs stored on the localUser
     const me = currentUser || localUser;
-    const requestIds = me.chatRequests || [];
-    if (requestIds.length === 0) { setChatRequests([]); return; }
+    if (!me?._id) return;
     try {
-      const res = await axios.get(`${API_BASE}/api/users`);
-      const requestSet = new Set(requestIds.map(String));
-      const requesters = res.data.filter(u => requestSet.has(String(u._id)));
-      setChatRequests(requesters);
+      const res = await axios.get(`${API_BASE}/api/users/${me._id}/chat-requests`);
+      setChatRequests(res.data);
     } catch (e) { console.error("failed to load requests", e); }
   };
 
@@ -357,8 +363,8 @@ function Chat({ onLogout }) {
   };
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/users`)
-      .then(res => setUsers(res.data.filter(u => u._id !== localUser._id)));
+    axios.get(`${API_BASE}/api/users/${localUser._id}/accepted-chats`)
+      .then(res => setUsers(res.data));
     axios.get(`${API_BASE}/api/groups/${localUser._id}`)
       .then(res => setGroups(res.data.map(g => ({ ...g, isGroup: true, username: g.name }))))
       .catch(err => console.error("failed to load groups", err));
@@ -372,13 +378,23 @@ function Chat({ onLogout }) {
     loadRequestHistory();
   }, [localUser._id]);
 
+  useEffect(() => {
+    if (!discoverSearch.trim()) {
+      setDiscoverSearchResults([]);
+      return;
+    }
+    const delay = setTimeout(() => {
+      axios.get(`${API_BASE}/api/users/search?q=${discoverSearch.trim()}&excludeId=${localUser._id}`)
+        .then(res => setDiscoverSearchResults(res.data))
+        .catch(err => console.error("Search failed", err));
+    }, 400);
+    return () => clearTimeout(delay);
+  }, [discoverSearch, localUser._id]);
+
   // ─── Socket: online / offline / typing ───────────────────────────────────
   useEffect(() => {
     const onOnline = (data) => {
       setOnlineUsers(prev => ({ ...prev, [data.userId]: true }));
-      if (data.user && data.user._id !== localUser._id) {
-        setUsers(prev => prev.find(u => u._id === data.user._id) ? prev : [...prev, data.user]);
-      }
     };
     const onOffline = (data) => setOnlineUsers(prev => ({ ...prev, [data.userId]: false }));
     const onList = (map) => setOnlineUsers(map || {});
@@ -408,9 +424,9 @@ function Chat({ onLogout }) {
         return [{ from, status: 'pending', requestedAt: new Date().toISOString() }, ...prev];
       });
       // Reload local user so chatRequests array is up-to-date
-      axios.get(`${API_BASE}/api/users`)
+      axios.get(`${API_BASE}/api/users/${localUser._id}`)
         .then(res => {
-          const me = res.data.find(u => u._id === localUser._id);
+          const me = res.data;
           if (me) { setLocalUser(me); localStorage.setItem('user', JSON.stringify(me)); }
         });
     });
@@ -438,9 +454,9 @@ function Chat({ onLogout }) {
     socket.on("chatAccepted", ({ by }) => {
       showToast(`✅ ${by.username} accepted your chat request!`, 'success');
       // Reload local user so acceptedChats is up-to-date
-      axios.get(`${API_BASE}/api/users`)
+      axios.get(`${API_BASE}/api/users/${localUser._id}`)
         .then(res => {
-          const me = res.data.find(u => u._id === localUser._id);
+          const me = res.data;
           if (me) { setLocalUser(me); localStorage.setItem('user', JSON.stringify(me)); }
         });
     });
@@ -468,13 +484,14 @@ function Chat({ onLogout }) {
   useEffect(() => { setOpenHeaderMenu(false); }, [selected?._id]);
 
   useEffect(() => {
-    if (!openHeaderMenu && openMenuId == null) return;
+    if (!openHeaderMenu && openMenuId == null && !showEmojiPicker) return;
 
     const handleOutsideMenuClick = (event) => {
       if (!(event.target instanceof Element)) return;
 
       const clickedMessageMenu = event.target.closest('.message-options');
       const clickedHeaderMenu = event.target.closest('.chat-header-menu');
+      const clickedEmojiPicker = event.target.closest('.emoji-picker-container');
 
       if (!clickedMessageMenu) {
         setOpenMenuId(null);
@@ -482,11 +499,14 @@ function Chat({ onLogout }) {
       if (!clickedHeaderMenu) {
         setOpenHeaderMenu(false);
       }
+      if (!clickedEmojiPicker) {
+        setShowEmojiPicker(false);
+      }
     };
 
     document.addEventListener('pointerdown', handleOutsideMenuClick);
     return () => document.removeEventListener('pointerdown', handleOutsideMenuClick);
-  }, [openHeaderMenu, openMenuId]);
+  }, [openHeaderMenu, openMenuId, showEmojiPicker]);
 
   useEffect(() => {
     if (!isMobileViewport()) return;
@@ -884,7 +904,7 @@ function Chat({ onLogout }) {
     } catch (e) { console.error('failed to load blocked users', e); }
   };
 
-  const openProfileModal = () => {
+  const openSettingsModal = () => {
     setViewingUser(null);
     setProfileDraft({ displayName: localUser.displayName || '', bio: localUser.bio || '' });
     setProfileEditMode(false);
@@ -892,11 +912,20 @@ function Chat({ onLogout }) {
     setPasswordDraft({ currentPassword: '', newPassword: '', confirmPassword: '' });
     setDeletePassword('');
     loadBlockedUsers();
+    setProfileModalMode('settings');
+    setShowProfileModal(true);
+  };
+
+  const openProfileModal = () => {
+    setViewingUser(null);
+    setProfileDraft({ displayName: localUser.displayName || '', bio: localUser.bio || '' });
+    setProfileEditMode(false);
+    setProfileModalMode('profile');
     setShowProfileModal(true);
   };
 
   const openUserProfile = (u) => {
-    const normalizedUser = typeof u === 'string' ? usersById[String(u)] : u;
+    const normalizedUser = typeof u === 'string' ? { _id: u } : u;
     if (!normalizedUser?._id) {
       showToast('User details not available yet', 'info');
       return;
@@ -1156,7 +1185,7 @@ function Chat({ onLogout }) {
       return (
         <>
           {/* Groups first */}
-          {sortedGroups.map(u => {
+          {sortedGroups.filter(u => !discoverSearch.trim() || (u.username || u.name || '').toLowerCase().includes(discoverSearch.trim().toLowerCase())).map(u => {
             const unread = unreadCounts[u._id] || 0;
             return (
               <div key={u._id} className={`chat-list-item-active flex items-center gap-4 p-4 rounded-2xl group cursor-pointer ${selected?._id === u._id ? 'bg-primary-container/10 border-l-4 border-primary' : 'hover:bg-surface-container-high'}`} onClick={() => openChat(u)}>
@@ -1176,7 +1205,7 @@ function Chat({ onLogout }) {
             );
           })}
           {/* Accepted DMs */}
-          {acceptedUserList.map(u => {
+          {acceptedUserList.filter(u => !discoverSearch.trim() || (u.username || '').toLowerCase().includes(discoverSearch.trim().toLowerCase())).map(u => {
             const unread = unreadCounts[u._id] || 0;
             const isOnline = onlineUsers[u._id] || false;
             return (
@@ -1207,163 +1236,222 @@ function Chat({ onLogout }) {
     }
 
     if (sidebarTab === 'requests') {
-      const pendingRequestUsers = chatRequests.filter(u => !messageRequestSenderIdSet.has(String(u._id)));
+      const searchStr = discoverSearch.trim().toLowerCase();
+      const pendingRequestUsers = chatRequests.filter(u => !messageRequestSenderIdSet.has(String(u._id)) && (!searchStr || (u.username || '').toLowerCase().includes(searchStr)));
       const acceptedFollowBackRequests = requestHistory.filter(h => h?.status === 'accepted');
+      const filteredMessageRequests = messageRequests.filter(req => !searchStr || (req.from?.username || '').toLowerCase().includes(searchStr));
 
       return (
-        <div className="users-list">
-          <div className="request-section-title">Message Requests</div>
-          {messageRequests.length === 0 ? (
-            <div className="empty-tab" style={{ marginBottom: '10px' }}>
-              <div className="empty-icon">📩</div>
-              <div>No message requests</div>
-            </div>
-          ) : messageRequests.map((req, idx) => {
-            const from = req?.from || {};
-            const preview = req?.latestMedia ? (req.latestMedia.name || 'Attachment') : (req?.latestMessage || 'Message request');
-            return (
-              <div key={`${from?._id || idx}-${req?.latestCreatedAt || idx}`} className="request-card">
-                <div className="user-avatar">
-                  {from?.avatar ? <img src={from.avatar} alt="u" /> : (from?.username || 'U').slice(0, 1).toUpperCase()}
-                </div>
-                <div className="request-info">
-                  <div className="user-name">{from?.username || 'Unknown user'}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>{preview}</div>
-                  <div className="request-actions">
-                    <button className="btn-accept" onClick={() => acceptChatRequest(from._id)}>Accept</button>
-                    <button className="btn-decline" onClick={() => declineChatRequest(from._id)}>Decline</button>
+        <div className="flex flex-col gap-2 py-2" style={{ minHeight: 0 }}>
+          {/* Message Requests Collapsible */}
+          <div className="overflow-hidden">
+            <button 
+              className="w-full flex items-center justify-between p-4 hover:bg-surface-container-high transition-colors rounded-xl"
+              onClick={() => toggleSection('messageRequests')}
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[20px]">mark_email_unread</span>
+                <h3 className="text-label-md font-label-md text-on-surface">Message Requests</h3>
+                {filteredMessageRequests.length > 0 && <span className="w-2 h-2 rounded-full bg-primary"></span>}
+              </div>
+              <span className="material-symbols-outlined text-on-surface-variant transition-transform duration-200" style={{ transform: expandedSections.messageRequests ? 'rotate(180deg)' : '' }}>expand_more</span>
+            </button>
+            
+            {expandedSections.messageRequests && (
+              <div className="px-2 pb-2">
+                {filteredMessageRequests.length === 0 ? (
+                  <div className="text-center py-6 text-on-surface-variant">
+                    <span className="material-symbols-outlined block text-[32px] opacity-50 mb-2">drafts</span>
+                    <span className="text-body-sm">No message requests</span>
                   </div>
-                </div>
-              </div>
-            );
-          })}
-
-          <div className="request-section-title">Pending Requests</div>
-          {pendingRequestUsers.length === 0 ? (
-            <div className="empty-tab" style={{ marginBottom: '10px' }}>
-              <div className="empty-icon">📨</div>
-              <div>No pending requests</div>
-            </div>
-          ) : pendingRequestUsers.map(u => (
-            <div key={u._id} className="request-card">
-              <div className="user-avatar">
-                {u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
-              </div>
-              <div className="request-info">
-                <div className="user-name">{u.username}</div>
-                <div className="request-actions">
-                  <button className="btn-accept" onClick={() => acceptChatRequest(u._id)}>Accept</button>
-                  <button className="btn-decline" onClick={() => declineChatRequest(u._id)}>Decline</button>
-                  {!isFollowing(u._id) && !hasPendingRequest(u._id) && (
-                    <button className="btn-follow" onClick={() => toggleFollow(u._id)} style={{ padding: '4px 8px' }}>Follow Back</button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-
-          <div className="request-section-title" style={{ marginTop: '12px' }}>Follow Back / History</div>
-          {acceptedFollowBackRequests.length === 0 && requestHistory.length === 0 ? (
-            <div className="empty-tab">
-              <div className="empty-icon">🕘</div>
-              <div>No request history yet</div>
-            </div>
-          ) : requestHistory.map((h, idx) => {
-            const fromRaw = h?.from;
-            const from = fromRaw && typeof fromRaw === 'object' ? fromRaw : {};
-            const fromId = String(from?._id || fromRaw || `hist-${idx}`);
-            const fromUsername = from?.username || 'Unknown user';
-            const fromAvatar = from?.avatar;
-            const status = h?.status || 'pending';
-            const alreadyFollowing = isFollowing(fromId);
-            const alreadyPending = hasPendingRequest(fromId);
-            const isValidId = fromId && fromId.length > 6 && !fromId.startsWith('hist-');
-            return (
-              <div key={`${fromId}-${h?.requestedAt || idx}`} className="request-card history-card">
-                <div className="user-avatar">
-                  {fromAvatar ? <img src={fromAvatar} alt="u" /> : (fromUsername || 'U').slice(0, 1).toUpperCase()}
-                </div>
-                <div className="request-info">
-                  <div className="user-name">{fromUsername}</div>
-                  <div className="request-history-meta">
-                    <span className={`status-pill ${status}`}>{status}</span>
-                    <span className="history-time">{new Date(h?.respondedAt || h?.requestedAt || Date.now()).toLocaleString()}</span>
-                  </div>
-                  {status === 'accepted' && isValidId && (
-                    <div className="request-actions" style={{ marginTop: '8px' }}>
-                      <button
-                        className={`btn-follow ${alreadyFollowing || alreadyPending ? 'btn-unfollow' : ''}`}
-                        disabled={alreadyFollowing || alreadyPending}
-                        style={{ opacity: alreadyFollowing || alreadyPending ? 0.7 : 1, cursor: alreadyFollowing || alreadyPending ? 'default' : 'pointer' }}
-                        onClick={() => {
-                          if (!alreadyFollowing && !alreadyPending) {
-                            toggleFollow(fromId);
-                          }
-                        }}
-                      >
-                        {alreadyFollowing ? '✓ Following' : (alreadyPending ? '⏳ Pending...' : '+ Follow Back')}
-                      </button>
+                ) : filteredMessageRequests.map((req, idx) => {
+                  const from = req?.from || {};
+                  const preview = req?.latestMedia ? (req.latestMedia.name || 'Attachment') : (req?.latestMessage || 'Message request');
+                  return (
+                    <div key={`${from?._id || idx}-${req?.latestCreatedAt || idx}`} className="flex flex-col gap-2 p-3 rounded-xl hover:bg-surface-container transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-bold shrink-0 overflow-hidden">
+                          {from?.avatar ? <img src={from.avatar} alt="u" className="w-full h-full object-cover" /> : (from?.username || 'U').slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-label-md font-label-md text-on-surface truncate">{from?.username || 'Unknown user'}</div>
+                          <div className="text-body-sm text-on-surface-variant truncate">{preview}</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-1">
+                        <button className="flex-1 bg-primary text-on-primary hover:bg-primary/90 px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => acceptChatRequest(from._id)}>Accept</button>
+                        <button className="flex-1 bg-transparent border border-outline text-on-surface hover:bg-surface-container px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => declineChatRequest(from._id)}>Decline</button>
+                      </div>
                     </div>
-                  )}
-                </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            )}
+          </div>
+
+          {/* Pending Requests Collapsible */}
+          <div className="overflow-hidden">
+            <button 
+              className="w-full flex items-center justify-between p-4 hover:bg-surface-container-high transition-colors rounded-xl"
+              onClick={() => toggleSection('pendingRequests')}
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[20px]">schedule</span>
+                <h3 className="text-label-md font-label-md text-on-surface">Pending Requests</h3>
+                {pendingRequestUsers.length > 0 && <span className="w-2 h-2 rounded-full bg-primary"></span>}
+              </div>
+              <span className="material-symbols-outlined text-on-surface-variant transition-transform duration-200" style={{ transform: expandedSections.pendingRequests ? 'rotate(180deg)' : '' }}>expand_more</span>
+            </button>
+            
+            {expandedSections.pendingRequests && (
+              <div className="px-2 pb-2">
+                {pendingRequestUsers.length === 0 ? (
+                  <div className="text-center py-6 text-on-surface-variant">
+                    <span className="material-symbols-outlined block text-[32px] opacity-50 mb-2">hourglass_empty</span>
+                    <span className="text-body-sm">No pending requests</span>
+                  </div>
+                ) : pendingRequestUsers.map(u => (
+                  <div key={u._id} className="flex flex-col gap-2 p-3 rounded-xl hover:bg-surface-container transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-bold shrink-0 overflow-hidden">
+                        {u.avatar ? <img src={u.avatar} alt="u" className="w-full h-full object-cover" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-label-md font-label-md text-on-surface truncate">{u.username}</div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      <button className="flex-1 bg-primary text-on-primary hover:bg-primary/90 px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => acceptChatRequest(u._id)}>Accept</button>
+                      <button className="flex-1 bg-transparent border border-outline text-on-surface hover:bg-surface-container px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => declineChatRequest(u._id)}>Decline</button>
+                      {!isFollowing(u._id) && !hasPendingRequest(u._id) && (
+                        <button className="w-full bg-secondary-container text-on-secondary-container hover:bg-secondary-container/80 px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => toggleFollow(u._id)}>Follow Back</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Follow Back / History Collapsible */}
+          <div className="overflow-hidden">
+            <button 
+              className="w-full flex items-center justify-between p-4 hover:bg-surface-container-high transition-colors rounded-xl"
+              onClick={() => toggleSection('followBack')}
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[20px]">history</span>
+                <h3 className="text-label-md font-label-md text-on-surface">Follow Back / History</h3>
+              </div>
+              <span className="material-symbols-outlined text-on-surface-variant transition-transform duration-200" style={{ transform: expandedSections.followBack ? 'rotate(180deg)' : '' }}>expand_more</span>
+            </button>
+            
+            {expandedSections.followBack && (
+              <div className="px-2 pb-2">
+                {acceptedFollowBackRequests.length === 0 && requestHistory.length === 0 ? (
+                  <div className="text-center py-6 text-on-surface-variant">
+                    <span className="material-symbols-outlined block text-[32px] opacity-50 mb-2">history</span>
+                    <span className="text-body-sm">No request history yet</span>
+                  </div>
+                ) : requestHistory.filter(h => !searchStr || (h?.from?.username || '').toLowerCase().includes(searchStr)).map((h, idx) => {
+                  const fromRaw = h?.from;
+                  const from = fromRaw && typeof fromRaw === 'object' ? fromRaw : {};
+                  const fromId = String(from?._id || fromRaw || `hist-${idx}`);
+                  const fromUsername = from?.username || 'Unknown user';
+                  const fromAvatar = from?.avatar;
+                  const status = h?.status || 'pending';
+                  const alreadyFollowing = isFollowing(fromId);
+                  const alreadyPending = hasPendingRequest(fromId);
+                  const isValidId = fromId && fromId.length > 6 && !fromId.startsWith('hist-');
+                  
+                  return (
+                    <div key={`${fromId}-${h?.requestedAt || idx}`} className="flex flex-col gap-2 p-3 rounded-xl hover:bg-surface-container transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-bold shrink-0 overflow-hidden">
+                          {fromAvatar ? <img src={fromAvatar} alt="u" className="w-full h-full object-cover" /> : (fromUsername || 'U').slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-label-md font-label-md text-on-surface truncate">{fromUsername}</div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${status === 'accepted' ? 'bg-green-500/20 text-green-500 border border-green-500/30' : status === 'declined' ? 'bg-red-500/20 text-red-500 border border-red-500/30' : 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30'}`}>{status}</span>
+                            <span className="text-[10px] text-on-surface-variant">{new Date(h?.respondedAt || h?.requestedAt || Date.now()).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                      {status === 'accepted' && isValidId && (
+                        <div className="mt-1">
+                          <button
+                            className={`w-full px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors ${alreadyFollowing || alreadyPending ? 'bg-transparent border border-outline text-on-surface-variant cursor-default' : 'bg-primary text-on-primary hover:bg-primary/90'}`}
+                            disabled={alreadyFollowing || alreadyPending}
+                            onClick={() => {
+                              if (!alreadyFollowing && !alreadyPending) toggleFollow(fromId);
+                            }}
+                          >
+                            {alreadyFollowing ? '✓ Following' : (alreadyPending ? '⏳ Pending...' : '+ Follow Back')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       );
     }
 
     if (sidebarTab === 'discover') {
-      const searchLower = discoverSearch.toLowerCase();
       const displayUsers = discoverSearch.trim() 
-          ? users.filter(u => (u.username?.toLowerCase() || '').includes(searchLower) || (u.displayName?.toLowerCase() || '').includes(searchLower))
+          ? discoverSearchResults
           : suggestions;
 
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-          <div className="users-list" style={{ marginTop: 0, paddingRight: '4px', flex: 1, overflowY: 'auto' }}>
-            {displayUsers.length === 0 ? (
-              <div className="empty-tab">
-                <div className="empty-icon">🔍</div>
-                <div>{discoverSearch.trim() ? "No users found" : "No suggestions right now"}</div>
-              </div>
-            ) : displayUsers.map(u => {
+        <div className="flex flex-col gap-2 py-2" style={{ minHeight: 0 }}>
+          {displayUsers.length === 0 ? (
+            <div className="text-center py-10 text-on-surface-variant">
+              <span className="material-symbols-outlined block text-[40px] opacity-50 mb-2">search_off</span>
+              <span className="text-body-sm">{discoverSearch.trim() ? "No users found" : "No suggestions right now"}</span>
+            </div>
+          ) : displayUsers.map(u => {
             const following = isFollowing(u._id);
             const pending = hasPendingRequest(u._id);
             const blocked = blockedSet.has(String(u._id));
+            
             return (
-              <div key={u._id} className="discover-card">
-                <div className="user-avatar" onClick={() => openUserProfile(u)} style={{ cursor: 'pointer' }} title="View profile">
-                  {u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+              <div key={u._id} className="flex flex-col gap-3 p-3 rounded-xl bg-surface-container-low border border-outline-variant hover:bg-surface-container transition-colors">
+                <div className="flex items-center gap-3 flex-1 min-w-0" onClick={() => openUserProfile(u)} style={{ cursor: 'pointer' }} title="View profile">
+                  <div className="w-12 h-12 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-bold shrink-0 overflow-hidden text-headline-sm">
+                    {u.avatar ? <img src={u.avatar} alt="u" className="w-full h-full object-cover" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-label-md font-label-md text-on-surface truncate">{u.username}</div>
+                    {pending && <div className="text-[10px] font-bold text-yellow-500 mt-1">⏳ Pending</div>}
+                  </div>
                 </div>
-                <div className="discover-info">
-                  <div className="user-name">{u.username}</div>
+                
+                <div className="flex gap-2">
                   {blocked ? (
-                    <div className="discover-actions">
-                      <button className="btn-unblock" onClick={() => unblockUser(u._id)}>Unblock</button>
-                    </div>
-                  ) : pending ? (
-                    <div className="pending-pill">⏳ Pending</div>
+                    <button className="flex-1 bg-error/10 text-error hover:bg-error/20 px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => unblockUser(u._id)}>Unblock</button>
                   ) : (
-                    <div className="discover-actions">
+                    <>
                       <button
-                        className={`btn-follow ${following || pending ? 'btn-unfollow' : ''}`}
+                        className={`flex-1 px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors ${following || pending ? 'bg-transparent border border-outline text-on-surface-variant' : 'bg-primary text-on-primary hover:bg-primary/90'}`}
                         onClick={() => toggleFollow(u._id)}
                       >
-                        {pending ? 'Cancel Request' : (following ? 'Unfollow' : 'Follow')}
+                        {pending ? 'Cancel' : (following ? 'Unfollow' : 'Follow')}
                       </button>
                       {!isAccepted(u._id) && (
-                        <button className="btn-request" onClick={() => setShowRequestModal(u)}>
-                          Message Request
+                        <button className="flex-1 bg-secondary-container text-on-secondary-container hover:bg-secondary-container/80 px-3 py-1.5 rounded-lg text-label-sm font-label-sm font-bold transition-colors" onClick={() => setShowRequestModal(u)}>
+                          Message
                         </button>
                       )}
-                    </div>
+                    </>
                   )}
                 </div>
               </div>
             );
           })}
-          </div>
         </div>
       );
     }
@@ -1371,7 +1459,7 @@ function Chat({ onLogout }) {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className={`chat-root ${isLightMode ? 'light' : 'dark'}`}>
+    <div className={`chat-root ${isLightMode ? 'light light-theme' : 'dark'}`}>
       {/* Toast */}
       {toast && (
         <div className={`toast toast-${toast.type}`}>{toast.msg}</div>
@@ -1406,16 +1494,16 @@ function Chat({ onLogout }) {
             <span className="logo-text text-headline-sm font-headline-sm font-bold text-primary truncate">Nexus Chat</span>
           </div>
           <div className="flex-1 space-y-1">
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'chats' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('chats'); if (isMobileViewport()) setSidebarCollapsed(true); }}>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'chats' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('chats'); setDiscoverSearch(''); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="chat" style={sidebarTab === 'chats' ? { fontVariationSettings: '"FILL" 1' } : {}}>chat</span>
                 <span className="nav-text text-label-md font-label-md truncate">Chats</span>
             </a>
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'requests' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('requests'); if (isMobileViewport()) setSidebarCollapsed(true); }}>
-                <span className="material-symbols-outlined shrink-0" data-icon="call">call</span>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'requests' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('requests'); setDiscoverSearch(''); if (isMobileViewport()) setSidebarCollapsed(true); }}>
+                <span className="material-symbols-outlined shrink-0" data-icon={requestBadgeCount > 0 ? "mark_email_unread" : "mail"}>{requestBadgeCount > 0 ? "mark_email_unread" : "mail"}</span>
                 <span className="nav-text text-label-md font-label-md truncate">Requests</span>
                 {requestBadgeCount > 0 && <span className="tab-badge bg-primary text-white rounded-full px-2 text-[10px] ml-auto">{requestBadgeCount}</span>}
             </a>
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'discover' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('discover'); loadSuggestions(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
+            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'discover' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('discover'); setDiscoverSearch(''); loadSuggestions(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="contacts">contacts</span>
                 <span className="nav-text text-label-md font-label-md truncate">Explore</span>
             </a>
@@ -1423,7 +1511,7 @@ function Chat({ onLogout }) {
                 <span className="material-symbols-outlined shrink-0" data-icon="group_add">group_add</span>
                 <span className="nav-text text-label-md font-label-md truncate">Create Group</span>
             </a>
-            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={() => { openProfileModal(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
+            <a className="nav-item flex items-center gap-4 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high px-4 py-3 mx-2 rounded-xl active:scale-95 cursor-pointer" onClick={() => { openSettingsModal(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="settings">settings</span>
                 <span className="nav-text text-label-md font-label-md truncate">Settings</span>
             </a>
@@ -1478,9 +1566,11 @@ function Chat({ onLogout }) {
                 <input 
                   className="input-focus-expand w-full bg-surface-container text-body-md font-body-md rounded-xl py-2.5 pl-10 pr-4 border-none focus:ring-2 focus:ring-primary/20 outline-none" 
                   placeholder={sidebarTab === 'discover' ? "Search all users..." : "Search..."} 
-                  value={sidebarTab === 'discover' ? discoverSearch : ''} 
-                  onChange={e => sidebarTab === 'discover' && setDiscoverSearch(e.target.value)} 
+                  value={discoverSearch} 
+                  onChange={e => setDiscoverSearch(e.target.value)} 
                   type="text" 
+                  name="sidebar-search-input"
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -1579,20 +1669,20 @@ function Chat({ onLogout }) {
                           <div className={`flex flex-col ${isMe ? 'items-end self-end' : 'items-start'} max-w-[85%] lg:max-w-[70%] message-entry`}>
                             {!isMe && selected.isGroup && (
                               <div className="text-label-sm font-label-sm text-on-surface-variant ml-12 mb-1">
-                                {usersById[String(m.from)]?.username || 'User'}
+                                {m.from?.username || 'User'}
                               </div>
                             )}
                             <div className={`flex items-end gap-2 ${isMe ? 'justify-end flex-row-reverse' : ''} relative group/msg`}>
                               {!isMe && (
                                 <div className="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center text-sm font-bold shrink-0 overflow-hidden cursor-pointer" onClick={() => openUserProfile(m.from)}>
-                                  {usersById[String(m.from)]?.avatar ? <img src={usersById[String(m.from)].avatar} alt="u" className="w-full h-full object-cover" /> : (usersById[String(m.from)]?.username || 'U').slice(0, 1).toUpperCase()}
+                                  {m.from?.avatar ? <img src={m.from.avatar} alt="u" className="w-full h-full object-cover" /> : (m.from?.username || 'U').slice(0, 1).toUpperCase()}
                                 </div>
                               )}
                               
                               <div className="flex flex-col gap-1">
                                 {m.replyTo && (
                                   <div className="text-xs bg-surface-variant text-on-surface-variant p-2 rounded-lg opacity-80 border-l-2 border-primary mb-1">
-                                    <div className="font-bold">{m.replyTo.from === user._id ? 'You' : (usersById[String(m.replyTo.from)]?.username || selected?.username || 'User')}</div>
+                                    <div className="font-bold">{m.replyTo.from === user._id || m.replyTo.from?._id === user._id ? 'You' : (m.replyTo.from?.username || selected?.username || 'User')}</div>
                                     <div className="truncate max-w-xs">{m.replyTo.message ? m.replyTo.message : (m.replyTo.media ? 'Attachment' : '')}</div>
                                   </div>
                                 )}
@@ -1673,7 +1763,7 @@ function Chat({ onLogout }) {
                   {replyingTo && (
                     <div className="flex items-center justify-between bg-surface-variant p-2 px-4 rounded-xl mb-3 text-sm">
                       <div className="truncate">
-                        <span className="font-bold text-primary mr-2">Replying to {replyingTo.from === user._id ? 'yourself' : (usersById[String(replyingTo.from)]?.username || 'User')}</span>
+                        <span className="font-bold text-primary mr-2">Replying to {replyingTo.from === user._id || replyingTo.from?._id === user._id ? 'yourself' : (replyingTo.from?.username || 'User')}</span>
                         <span className="text-on-surface-variant">{replyingTo.message || 'Attachment'}</span>
                       </div>
                       <button className="text-on-surface-variant hover:text-error shrink-0 ml-2" onClick={() => setReplyingTo(null)}>
@@ -1708,7 +1798,7 @@ function Chat({ onLogout }) {
                     </button>
                     <input ref={mediaFileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={onMediaFile} />
                     
-                    <div className="flex-1 relative group">
+                    <div className="flex-1 relative group emoji-picker-container">
                       <input 
                         className="input-focus-expand w-full bg-surface-container-low text-body-md lg:text-body-lg font-body-lg px-4 lg:px-6 py-3 lg:py-4 rounded-2xl border-b-2 border-transparent focus:border-primary focus:ring-0 outline-none shadow-sm" 
                         placeholder={editingMessage ? "Edit message..." : "Type a message..."} 
@@ -2007,13 +2097,15 @@ function Chat({ onLogout }) {
 
         return (
           <div className="modal-overlay" onClick={() => { setShowProfileModal(false); setProfileEditMode(false); }}>
-            <div className="modal-content profile-modal" onClick={e => e.stopPropagation()}>
+            <div className={`modal-content profile-modal ${profileModalMode === 'settings' ? 'settings-modal' : ''}`} onClick={e => e.stopPropagation()}>
 
               {/* Close button */}
               <button className="profile-close-btn" onClick={() => { setShowProfileModal(false); setProfileEditMode(false); }}>✕</button>
 
-              {/* Cover banner */}
-              <div className="profile-modal-cover" />
+              {profileModalMode === 'profile' && (
+                <>
+                  {/* Cover banner */}
+                  <div className="profile-modal-cover" />
 
               {/* Avatar */}
               <div className="profile-avatar-wrap" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
@@ -2092,10 +2184,14 @@ function Chat({ onLogout }) {
                   </div>
                 )}
               </div>
+              </>
+              )}
 
-              {isMe && (
-                <div className="account-settings-panel">
+              {isMe && profileModalMode === 'settings' && (
+                <div className="account-settings-panel" style={{ marginTop: '20px' }}>
                   <div className="account-settings-title">Account Settings</div>
+                  {/* Invisible honeypot input to trap aggressive browser autofill */}
+                  <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} />
                   <div className="account-settings-grid">
                     <div className="profile-field">
                       <label className="profile-label">Current Password</label>
@@ -2149,8 +2245,10 @@ function Chat({ onLogout }) {
                 </div>
               )}
 
-              {/* Stats */}
-              <div className="profile-stats">
+              {profileModalMode === 'profile' && (
+                <>
+                  {/* Stats */}
+                  <div className="profile-stats">
                 <div className="profile-stat" onClick={() => { setShowProfileModal(false); setFollowModalTab('following'); setShowFollowModal(true); }}>
                   <div className="profile-stat-num">{(profileUser.following || []).length}</div>
                   <div className="profile-stat-label">Following</div>
@@ -2228,9 +2326,11 @@ function Chat({ onLogout }) {
                   </div>
                 )}
               </div>
+              </>
+              )}
 
               {/* Blocked Users Section */}
-              {isMe && (
+              {isMe && profileModalMode === 'settings' && (
                 <div className="blocked-section">
                   <button
                     className="blocked-toggle"
@@ -2305,7 +2405,7 @@ function Chat({ onLogout }) {
 
             <div style={{ marginBottom: '10px', fontSize: '12px', color: 'var(--muted)' }}>
               Admins: {selectedGroupAdminIds.length > 0
-                ? selectedGroupAdminIds.map(id => usersById[String(id)]?.username || 'User').join(', ')
+                ? selectedGroupAdminIds.map(id => selectedGroup.admins?.find(a => String(a._id || a) === String(id))?.username || 'User').join(', ')
                 : 'Unknown'}
             </div>
 
@@ -2389,10 +2489,10 @@ function Chat({ onLogout }) {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {(selected.members || []).filter(Boolean).map(member => {
-                const memberObj = typeof member === 'string' ? usersById[String(member)] : member;
+                const memberObj = typeof member === 'string' ? selected.members?.find(m => String(m._id || m) === member) || { _id: member } : member;
                 const memberId = String(memberObj?._id || member);
-                const memberName = memberObj?.username || usersById[memberId]?.username || 'User';
-                const memberAvatar = memberObj?.avatar || usersById[memberId]?.avatar;
+                const memberName = memberObj?.username || 'User';
+                const memberAvatar = memberObj?.avatar;
                 const isMe = memberId === String(localUser?._id);
                 const isMemberAdmin = selectedGroupAdminIds.includes(memberId);
                 return (

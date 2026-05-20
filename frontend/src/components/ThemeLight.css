@@ -160,6 +160,32 @@ body.light-theme-body {
   color: var(--text-main) !important;
 }
 
+.light-theme .profile-display-name,
+.light-theme .profile-stat-num {
+  color: var(--text-main) !important;
+}
+
+.light-theme .profile-username,
+.light-theme .profile-bio,
+.light-theme .profile-stat-label {
+  color: var(--muted) !important;
+}
+
+.light-theme .modal-content input[type="text"], 
+.light-theme .modal-content input[type="password"],
+.light-theme .profile-input {
+  background: #f1f5f9 !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.light-theme .modal-content input[type="text"]:focus, 
+.light-theme .modal-content input[type="password"]:focus,
+.light-theme .profile-input:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-glow) !important;
+}
+
 /* Base structural additions (apply regardless of theme but themed by vars) */
 .nav-rail {
   width: 72px;

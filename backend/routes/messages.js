@@ -97,7 +97,12 @@ router.get('/:userId/:otherId', async (req, res) => {
     }
     const msgs = await Message.find({ room, deletedBy: { $ne: req.params.userId } })
       .sort('createdAt')
-      .populate('replyTo', 'message media from _id')
+      .populate({
+        path: 'replyTo',
+        select: 'message media from _id',
+        populate: { path: 'from', select: 'username displayName avatar' }
+      })
+      .populate('from', 'username displayName avatar')
       .lean();
     return res.json(msgs);
   } catch (err) {
