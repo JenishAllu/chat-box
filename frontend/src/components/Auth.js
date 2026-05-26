@@ -320,25 +320,14 @@ function Auth({ onAuthSuccess }) {
           setResetRecoveryEmail(form.email.trim().toLowerCase());
           setRecoveryMethod('otp');
           setMode('reset-password');
-            // If server provides a preview OTP (OTP_PREVIEW_ONLY), auto-fill it for the user
-            if (res.data && res.data.otp) {
-              setResetOtp(String(res.data.otp));
-              setSuccess(`${res.data.msg || 'OTP sent.'} Preview OTP: ${res.data.otp}`);
-            } else {
-              setResetOtp('');
-              setSuccess(res.data.msg || 'If the account exists, an OTP has been sent.');
-            }
+          setResetOtp('');
+          setSuccess(res.data.msg || 'If the account exists, an OTP has been sent.');
           return;
         }
         const res = await axios.post(`${API_BASE}/api/auth/forgot-password`, {
           email: form.email.trim(),
         });
-        // If server provides a preview resetUrl (OTP_PREVIEW_ONLY), show it to the user
-        if (res.data && res.data.resetUrl) {
-          setSuccess(`${res.data.msg || 'Reset link generated.'} Preview URL: ${res.data.resetUrl}`);
-        } else {
-          setSuccess(res.data.msg || 'If the account exists, a reset link has been sent.');
-        }
+        setSuccess(res.data.msg || 'If the account exists, a reset link has been sent.');
         return;
       }
 
@@ -479,319 +468,364 @@ function Auth({ onAuthSuccess }) {
 
   return (
     <div className="auth-page">
-      <div className="auth-card">
-        <div className="auth-header">
-          <h2>
-            {showResetFields
-              ? 'Reset Password'
-              : showVerifyFields
-              ? 'Verify Email'
-              : showGoogleUsernameFields
-                ? 'Choose a Username'
-                : showForgotFields
-                  ? 'Forgot Password'
-                : mode === 'login'
-                  ? 'Welcome Back'
-                  : 'Create Account'}
-          </h2>
-          <p>
-            {showResetFields
-              ? 'Set a new password for your account'
-              : showVerifyFields
-              ? 'Enter the one-time code we sent to your inbox'
-              : showGoogleUsernameFields
-                ? `Google account verified${googleProfile.email ? ` for ${googleProfile.email}` : ''}. Pick a username to finish.`
-                : showForgotFields
-                  ? (recoveryMethod === 'otp'
-                      ? 'Enter your email and we will send an OTP'
-                      : 'Enter your email and we will send a reset link')
-              : mode === 'login'
-                ? 'Log in to continue your journey'
-                : 'Join us to get started with Insta Chat'}
-          </p>
+      <div className="auth-container">
+        {/* Left Side: Brand Panel */}
+        <div className="auth-side-panel">
+          <div className="brand-logo">
+            <span className="logo-icon">💬</span>
+            <span>Insta Chat</span>
+          </div>
+          <div className="panel-content">
+            <h1>Connect with the world in real-time.</h1>
+            <p>Experience ultra-fast messaging, rich media sharing, secure group chats, and real-time custom statuses.</p>
+            
+            <div className="features-list">
+              <div className="feature-item">
+                <span className="feature-icon">⚡</span>
+                <div>
+                  <strong>Ultra-Fast Delivery</strong>
+                  <span>Instant message transfers powered by Socket.io.</span>
+                </div>
+              </div>
+              <div className="feature-item">
+                <span className="feature-icon">🛡️</span>
+                <div>
+                  <strong>Robust Privacy</strong>
+                  <span>Account security, trust levels, and user blocklists.</span>
+                </div>
+              </div>
+              <div className="feature-item">
+                <span className="feature-icon">✨</span>
+                <div>
+                  <strong>Rich Chat Features</strong>
+                  <span>Direct replies, emoji support, forwarding, and editing.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="panel-footer">
+            <span>© 2026 Insta Chat. Secure Messaging & Realtime Delivery.</span>
+          </div>
         </div>
 
-        {error && <div className="auth-error">{error}</div>}
-        {success && <div className="auth-success">{success}</div>}
+        {/* Right Side: Form Panel */}
+        <div className="auth-form-panel">
+          <div className="auth-card">
+            <div className="auth-header">
+              <h2>
+                {showResetFields
+                  ? 'Reset Password'
+                  : showVerifyFields
+                  ? 'Verify Email'
+                  : showGoogleUsernameFields
+                    ? 'Choose a Username'
+                    : showForgotFields
+                      ? 'Forgot Password'
+                    : mode === 'login'
+                      ? 'Welcome Back'
+                      : 'Create Account'}
+              </h2>
+              <p>
+                {showResetFields
+                  ? 'Set a new password for your account'
+                  : showVerifyFields
+                  ? 'Enter the one-time code we sent to your inbox'
+                  : showGoogleUsernameFields
+                    ? `Google account verified${googleProfile.email ? ` for ${googleProfile.email}` : ''}. Pick a username to finish.`
+                    : showForgotFields
+                      ? (recoveryMethod === 'otp'
+                          ? 'Enter your email and we will send an OTP'
+                          : 'Enter your email and we will send a reset link')
+                  : mode === 'login'
+                    ? 'Log in to continue your journey'
+                    : 'Join us to get started with Insta Chat'}
+              </p>
+            </div>
 
-        <form onSubmit={submit} className="auth-form">
-          {showRegisterFields && (
-            <>
-              <div className="input-group">
-                <input
-                  type="text"
-                  placeholder="Full Name"
-                  value={form.realName}
-                  onChange={e => setForm({ ...form, realName: e.target.value })}
-                  autoComplete="name"
-                />
-              </div>
-              <div className="input-group">
-                <input
-                  type="text"
-                  placeholder="Username"
-                  value={form.username}
-                  onChange={e => setForm({ ...form, username: e.target.value })}
-                  autoComplete="username"
-                />
-              </div>
-            </>
-          )}
+            {error && <div className="auth-error">{error}</div>}
+            {success && <div className="auth-success">{success}</div>}
 
-          {showForgotFields && (
-            <>
-              <div className="auth-step-note">
-                Choose how you want to recover your password.
-              </div>
-              <div className="auth-recovery-methods">
-                <button
-                  type="button"
-                  className={`auth-recovery-method ${recoveryMethod === 'link' ? 'active' : ''}`}
-                  onClick={() => setRecoveryMethod('link')}
-                >
-                  Reset link
-                </button>
-                <button
-                  type="button"
-                  className={`auth-recovery-method ${recoveryMethod === 'otp' ? 'active' : ''}`}
-                  onClick={() => setRecoveryMethod('otp')}
-                >
-                  OTP
-                </button>
-              </div>
-              <div className="auth-step-note">
-                {recoveryMethod === 'otp'
-                  ? 'Enter the email address attached to your account and we will send a one-time code.'
-                  : 'Enter the email address attached to your account and we will send a reset link.'}
-              </div>
-              <div className="input-group">
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })}
-                  autoComplete="email"
-                />
-              </div>
-            </>
-          )}
+            <form onSubmit={submit} className="auth-form">
+              {showRegisterFields && (
+                <>
+                  <div className="input-group">
+                    <input
+                      type="text"
+                      placeholder="Full Name"
+                      value={form.realName}
+                      onChange={e => setForm({ ...form, realName: e.target.value })}
+                      autoComplete="name"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="text"
+                      placeholder="Username"
+                      value={form.username}
+                      onChange={e => setForm({ ...form, username: e.target.value })}
+                      autoComplete="username"
+                    />
+                  </div>
+                </>
+              )}
 
-          {showResetFields && (
-            <>
-              <div className="auth-step-note">
-                {recoveryMethod === 'otp'
-                  ? 'Enter the OTP sent to your email and choose a new password.'
-                  : (resetToken ? 'Reset link verified. Choose a new password.' : 'Reset link is missing or invalid.')}
-              </div>
-              {recoveryMethod === 'otp' && (
-                <div className="input-group">
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    value={resetRecoveryEmail}
-                    onChange={e => setResetRecoveryEmail(e.target.value)}
-                    autoComplete="email"
-                  />
+              {showForgotFields && (
+                <>
+                  <div className="auth-step-note">
+                    Choose how you want to recover your password.
+                  </div>
+                  <div className="auth-recovery-methods">
+                    <button
+                      type="button"
+                      className={`auth-recovery-method ${recoveryMethod === 'link' ? 'active' : ''}`}
+                      onClick={() => setRecoveryMethod('link')}
+                    >
+                      Reset link
+                    </button>
+                    <button
+                      type="button"
+                      className={`auth-recovery-method ${recoveryMethod === 'otp' ? 'active' : ''}`}
+                      onClick={() => setRecoveryMethod('otp')}
+                    >
+                      OTP
+                    </button>
+                  </div>
+                  <div className="auth-step-note">
+                    {recoveryMethod === 'otp'
+                      ? 'Enter the email address attached to your account and we will send a one-time code.'
+                      : 'Enter the email address attached to your account and we will send a reset link.'}
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={form.email}
+                      onChange={e => setForm({ ...form, email: e.target.value })}
+                      autoComplete="email"
+                    />
+                  </div>
+                </>
+              )}
+
+              {showResetFields && (
+                <>
+                  <div className="auth-step-note">
+                    {recoveryMethod === 'otp'
+                      ? 'Enter the OTP sent to your email and choose a new password.'
+                      : (resetToken ? 'Reset link verified. Choose a new password.' : 'Reset link is missing or invalid.')}
+                  </div>
+                  {recoveryMethod === 'otp' && (
+                    <div className="input-group">
+                      <input
+                        type="email"
+                        placeholder="Email"
+                        value={resetRecoveryEmail}
+                        onChange={e => setResetRecoveryEmail(e.target.value)}
+                        autoComplete="email"
+                      />
+                    </div>
+                  )}
+                  {recoveryMethod === 'otp' && (
+                    <div className="input-group">
+                      <input
+                        type="text"
+                        placeholder="6-digit OTP"
+                        value={resetOtp}
+                        onChange={e => setResetOtp(e.target.value)}
+                        inputMode="numeric"
+                        maxLength={6}
+                        autoComplete="one-time-code"
+                      />
+                    </div>
+                  )}
+                  <div className="input-group">
+                    <input
+                      type="password"
+                      placeholder="New password"
+                      value={resetForm.password}
+                      onChange={e => setResetForm({ ...resetForm, password: e.target.value })}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="password"
+                      placeholder="Confirm new password"
+                      value={resetForm.confirmPassword}
+                      onChange={e => setResetForm({ ...resetForm, confirmPassword: e.target.value })}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </>
+              )}
+
+              {showGoogleUsernameFields && (
+                <>
+                  <div className="auth-step-note">
+                    {googleProfile.name || 'Google sign-in'} is almost done. Choose your username to create the account.
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="text"
+                      placeholder="Username"
+                      value={form.username}
+                      onChange={e => setForm({ ...form, username: e.target.value })}
+                      autoComplete="username"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="password"
+                      placeholder="New password"
+                      value={form.password}
+                      onChange={e => setForm({ ...form, password: e.target.value })}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="password"
+                      placeholder="Confirm new password"
+                      value={form.confirmPassword}
+                      onChange={e => setForm({ ...form, confirmPassword: e.target.value })}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </>
+              )}
+
+              {showVerifyFields && (
+                <>
+                  <div className="auth-step-note">
+                    Verification email: <strong>{pendingEmail || form.email.trim()}</strong>
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={pendingEmail || form.email}
+                      onChange={e => setPendingEmail(e.target.value)}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="text"
+                      placeholder="6-digit OTP"
+                      value={otp}
+                      onChange={e => setOtp(e.target.value)}
+                      inputMode="numeric"
+                      maxLength={6}
+                      autoComplete="one-time-code"
+                    />
+                  </div>
+                </>
+              )}
+
+              {!showVerifyFields && !showForgotFields && !showResetFields && !showGoogleUsernameFields && (
+                <>
+                  <div className="input-group">
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={form.email}
+                      onChange={e => setForm({ ...form, email: e.target.value })}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      value={form.password}
+                      onChange={e => setForm({ ...form, password: e.target.value })}
+                      autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    />
+                  </div>
+                </>
+              )}
+
+              <button type="submit" className="auth-submit" disabled={loading}>
+                {loading ? <span className="spinner"></span> : submitLabel}
+              </button>
+
+              {mode === 'login' && (
+                <div className="auth-forgot-row">
+                  <span onClick={() => switchMode('forgot-password')} className="auth-forgot-link">
+                    Forgot password?
+                  </span>
                 </div>
               )}
-              {recoveryMethod === 'otp' && (
-                <div className="input-group">
-                  <input
-                    type="text"
-                    placeholder="6-digit OTP"
-                    value={resetOtp}
-                    onChange={e => setResetOtp(e.target.value)}
-                    inputMode="numeric"
-                    maxLength={6}
-                    autoComplete="one-time-code"
-                  />
+
+              {showGoogleAuth && (
+                <div className="google-auth-wrap">
+                  <div className="google-divider">or continue with</div>
+                  <div ref={googleButtonRef} className="google-button-slot" />
+                  {!GOOGLE_CLIENT_ID ? (
+                    <div className="google-loading-note">Set REACT_APP_GOOGLE_CLIENT_ID in frontend/.env to enable Google OAuth.</div>
+                  ) : !googleReady ? (
+                    <div className="google-loading-note">Loading Google sign-in...</div>
+                  ) : null}
                 </div>
               )}
-              <div className="input-group">
-                <input
-                  type="password"
-                  placeholder="New password"
-                  value={resetForm.password}
-                  onChange={e => setResetForm({ ...resetForm, password: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="input-group">
-                <input
-                  type="password"
-                  placeholder="Confirm new password"
-                  value={resetForm.confirmPassword}
-                  onChange={e => setResetForm({ ...resetForm, confirmPassword: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </div>
-            </>
-          )}
 
-          {showGoogleUsernameFields && (
-            <>
-              <div className="auth-step-note">
-                {googleProfile.name || 'Google sign-in'} is almost done. Choose your username to create the account.
-              </div>
-              <div className="input-group">
-                <input
-                  type="text"
-                  placeholder="Username"
-                  value={form.username}
-                  onChange={e => setForm({ ...form, username: e.target.value })}
-                  autoComplete="username"
-                />
-              </div>
-              <div className="input-group">
-                <input
-                  type="password"
-                  placeholder="New password"
-                  value={form.password}
-                  onChange={e => setForm({ ...form, password: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="input-group">
-                <input
-                  type="password"
-                  placeholder="Confirm new password"
-                  value={form.confirmPassword}
-                  onChange={e => setForm({ ...form, confirmPassword: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </div>
-            </>
-          )}
+              {mode === 'google-username' && (
+                <button type="button" className="auth-secondary" disabled={googleLoading} onClick={() => setMode('login')}>
+                  Back to login
+                </button>
+              )}
 
-          {showVerifyFields && (
-            <>
-              <div className="auth-step-note">
-                Verification email: <strong>{pendingEmail || form.email.trim()}</strong>
-              </div>
-              <div className="input-group">
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={pendingEmail || form.email}
-                  onChange={e => setPendingEmail(e.target.value)}
-                  autoComplete="email"
-                />
-              </div>
-              <div className="input-group">
-                <input
-                  type="text"
-                  placeholder="6-digit OTP"
-                  value={otp}
-                  onChange={e => setOtp(e.target.value)}
-                  inputMode="numeric"
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                />
-              </div>
-            </>
-          )}
+              {showForgotFields && (
+                <button type="button" className="auth-secondary" onClick={returnToLogin}>
+                  Back to login
+                </button>
+              )}
 
-          {!showVerifyFields && !showForgotFields && !showResetFields && !showGoogleUsernameFields && (
-            <>
-              <div className="input-group">
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })}
-                  autoComplete="email"
-                />
-              </div>
-              <div className="input-group">
-                <input
-                  type="password"
-                  placeholder="Password"
-                  value={form.password}
-                  onChange={e => setForm({ ...form, password: e.target.value })}
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                />
-              </div>
-            </>
-          )}
+              {showResetFields && (
+                <button type="button" className="auth-secondary" onClick={returnToLogin}>
+                  Back to login
+                </button>
+              )}
 
-          <button type="submit" className="auth-submit" disabled={loading}>
-            {loading ? <span className="spinner"></span> : submitLabel}
-          </button>
+              {showVerifyFields && (
+                <button type="button" className="auth-secondary" disabled={resendLoading} onClick={resendOtp}>
+                  {resendLoading ? 'Resending...' : 'Resend OTP'}
+                </button>
+              )}
+            </form>
 
-          {mode === 'login' && (
-            <div className="auth-forgot-row">
-              <span onClick={() => switchMode('forgot-password')} className="auth-forgot-link">
-                Forgot password?
-              </span>
+            <div className="auth-footer">
+              {mode !== 'verify' && mode !== 'google-username' && !showForgotFields && !showResetFields ? (
+                <p>
+                  {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
+                  <span
+                    onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
+                    className="toggle-link"
+                  >
+                    {mode === 'login' ? 'Sign up' : 'Log in'}
+                  </span>
+                </p>
+              ) : showForgotFields ? (
+                <p>
+                  Remembered your password?
+                  <span onClick={returnToLogin} className="toggle-link">
+                    Back to login
+                  </span>
+                </p>
+              ) : (
+                <p>
+                  Already verified?
+                  <span onClick={() => switchMode('login')} className="toggle-link">
+                    Back to login
+                  </span>
+                </p>
+              )}
             </div>
-          )}
-
-          {showGoogleAuth && (
-            <div className="google-auth-wrap">
-              <div className="google-divider">or continue with</div>
-              <div ref={googleButtonRef} className="google-button-slot" />
-              {!GOOGLE_CLIENT_ID ? (
-                <div className="google-loading-note">Set REACT_APP_GOOGLE_CLIENT_ID in frontend/.env to enable Google OAuth.</div>
-              ) : !googleReady ? (
-                <div className="google-loading-note">Loading Google sign-in...</div>
-              ) : null}
-            </div>
-          )}
-
-          {mode === 'google-username' && (
-            <button type="button" className="auth-secondary" disabled={googleLoading} onClick={() => setMode('login')}>
-              Back to login
-            </button>
-          )}
-
-          {showForgotFields && (
-            <button type="button" className="auth-secondary" onClick={returnToLogin}>
-              Back to login
-            </button>
-          )}
-
-          {showResetFields && (
-            <button type="button" className="auth-secondary" onClick={returnToLogin}>
-              Back to login
-            </button>
-          )}
-
-          {showVerifyFields && (
-            <button type="button" className="auth-secondary" disabled={resendLoading} onClick={resendOtp}>
-              {resendLoading ? 'Resending...' : 'Resend OTP'}
-            </button>
-          )}
-        </form>
-
-        <div className="auth-footer">
-          {mode !== 'verify' && mode !== 'google-username' && !showForgotFields && !showResetFields ? (
-            <p>
-              {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
-              <span
-                onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
-                className="toggle-link"
-              >
-                {mode === 'login' ? 'Sign up' : 'Log in'}
-              </span>
-            </p>
-          ) : showForgotFields ? (
-            <p>
-              Remembered your password?
-              <span onClick={returnToLogin} className="toggle-link">
-                Back to login
-              </span>
-            </p>
-          ) : (
-            <p>
-              Already verified?
-              <span onClick={() => switchMode('login')} className="toggle-link">
-                Back to login
-              </span>
-            </p>
-          )}
+          </div>
         </div>
       </div>
     </div>
+  );
   );
 }
 
