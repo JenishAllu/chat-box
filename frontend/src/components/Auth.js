@@ -389,12 +389,7 @@ function Auth({ onAuthSuccess }) {
         setPendingEmail(res.data.email || form.email.trim());
         setMode('verify');
         setOtp('');
-        if (res.data && res.data.otp) {
-          setOtp(String(res.data.otp));
-          setSuccess(`${res.data.msg || 'Verification code sent.'} Preview OTP: ${res.data.otp}`);
-        } else {
-          setSuccess(res.data.msg || 'Verification code sent to your email.');
-        }
+        setSuccess(res.data.msg || 'Verification code sent to your email.');
         return;
       }
 
@@ -467,12 +462,7 @@ function Auth({ onAuthSuccess }) {
     setSuccess('');
     try {
       const res = await axios.post(`${API_BASE}/api/auth/resend-otp`, { email: pendingEmail });
-      if (res.data && res.data.otp) {
-        setOtp(String(res.data.otp));
-        setSuccess(`${res.data.msg || 'Verification code resent.'} Preview OTP: ${res.data.otp}`);
-      } else {
-        setSuccess(res.data.msg || 'Verification code resent.');
-      }
+      setSuccess(res.data.msg || 'Verification code resent.');
     } catch (err) {
       setError(err.response?.data?.msg || err.response?.data?.error || 'Failed to resend OTP');
     } finally {
