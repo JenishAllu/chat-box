@@ -1,8 +1,9 @@
 const nodemailer = require('nodemailer');
+const https = require('https');
 
-// Secure SMTPS Gmail Fallback Credentials
+// Secure SMTPS Gmail Fallback Credentials (for local/backup use)
 const FALLBACK_USER = 'projevolve4450@gmail.com';
-const FALLBACK_PASS = 'cmvsmzhidmfhnulu'; // Gmail app password without spaces
+const FALLBACK_PASS = 'cmvsmzhidmfhnulu';
 
 function pickEnv(...keys) {
   for (const key of keys) {
@@ -12,6 +13,52 @@ function pickEnv(...keys) {
     }
   }
   return null;
+}
+
+// REST HTTPS API call to Brevo (runs on standard port 443, bypassing all SMTP port blocks)
+function sendEmailViaBrevoApi({ to, subject, text, html, apiKey, fromEmail }) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify({
+      sender: { email: fromEmail || 'no-reply@example.com', name: 'Insta Chat' },
+      to: [{ email: to }],
+      subject: subject,
+      textContent: text,
+      htmlContent: html
+    });
+
+    const options = {
+      hostname: 'api.brevo.com',
+      port: 443,
+      path: '/v3/smtp/email',
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': apiKey,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(data)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            resolve({ success: true });
+          }
+        } else {
+          reject(new Error(`Brevo API returned status ${res.statusCode}: ${body}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(err));
+    req.write(data);
+    req.end();
+  });
 }
 
 function getFallbackTransporter() {
@@ -42,8 +89,7 @@ function getTransporter() {
   let port = Number(pickEnv('SMTP_PORT', 'EMAIL_PORT', 'MAIL_PORT') || 587);
   let secureEnv = pickEnv('SMTP_SECURE', 'EMAIL_SECURE', 'MAIL_SECURE');
   
-  // Smart override for Gmail on cloud hosts: force direct Port 465 SMTPS.
-  // This bypasses cloud firewall blocks on Port 587 and STARTTLS timeout handshakes.
+  // Smart override for Gmail locally: force direct Port 465 SMTPS
   let activeService = service;
   if (service && String(service).toLowerCase() === 'gmail') {
     host = 'smtp.gmail.com';
@@ -58,7 +104,6 @@ function getTransporter() {
 
   const user = pickEnv('SMTP_USER', 'EMAIL_USER', 'MAIL_USER');
   const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS');
-  // Some users paste app-passwords with spaces; remove whitespace to reduce errors
   const pass = passRaw ? String(passRaw).replace(/\s+/g, '') : passRaw;
 
   if ((!host && !activeService) || !user || !pass) {
@@ -87,7 +132,6 @@ function getTransporter() {
 
   try {
     const transporter = nodemailer.createTransport(transportOptions);
-    // verify transporter immediately to surface config errors early
     transporter.verify().catch(err => {
       console.warn('[SMTP] transporter.verify() failed:', err && err.message ? err.message : err);
     });
@@ -104,7 +148,7 @@ function requireTransporter(actionLabel) {
     return transporter;
   }
 
-  const message = `${actionLabel} email delivery is not configured or failed to initialize. Set SMTP_HOST or SMTP_SERVICE, SMTP_USER, SMTP_PASS, and SMTP_FROM on Render (ensure SMTP_PASS is an app password if using Gmail).`;
+  const message = `${actionLabel} email delivery is not configured or failed to initialize. Set SMTP_HOST or SMTP_SERVICE, SMTP_USER, SMTP_PASS, and SMTP_FROM on Render.`;
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (process.env.NODE_ENV === 'production' && !allowPreviewOnly) {
     const error = new Error(message);
@@ -116,7 +160,6 @@ function requireTransporter(actionLabel) {
 }
 
 async function sendVerificationOtpEmail({ to, otp }) {
-  const transporter = requireTransporter('Verification OTP');
   const fromAddress =
     pickEnv('SMTP_FROM', 'EMAIL_FROM', 'MAIL_FROM', 'SMTP_USER', 'EMAIL_USER', 'MAIL_USER') ||
     'no-reply@example.com';
@@ -129,18 +172,42 @@ async function sendVerificationOtpEmail({ to, otp }) {
     html: `<p>Your verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
   };
 
+  const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
+  const pass = String(passRaw).replace(/\s+/g, '');
+
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY)
+  if (pass.startsWith('xsmtpsib')) {
+    console.log('[OTP] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
+    try {
+      await sendEmailViaBrevoApi({
+        to,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        apiKey: pass,
+        fromEmail: fromAddress
+      });
+      console.log('[OTP] Email sent successfully via Brevo HTTPS API!');
+      return { preview: false };
+    } catch (err) {
+      console.error('[OTP] Brevo HTTPS API failed:', err && err.message ? err.message : err);
+    }
+  }
+
+  // 2. PRIMARY SMTP
+  const transporter = requireTransporter('Verification OTP');
   let primaryFailed = false;
   if (transporter) {
     try {
       await transporter.sendMail(message);
       return { preview: false };
     } catch (err) {
-      console.warn('[OTP] Primary mailer failed. Attempting SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      console.warn('[OTP] Primary SMTP failed. Trying SMTPS Gmail fallback...', err && err.message ? err.message : err);
       primaryFailed = true;
     }
   }
 
-  // SMTPS Gmail Fallback
+  // 3. SMTPS GMAIL FALLBACK
   const fallbackTransporter = getFallbackTransporter();
   if (fallbackTransporter) {
     try {
@@ -153,10 +220,10 @@ async function sendVerificationOtpEmail({ to, otp }) {
     }
   }
 
-  // Preview Sandbox Fallback (Dev/Sandboxed mode)
+  // 4. PREVIEW SANDBOX
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (allowPreviewOnly || primaryFailed) {
-    console.warn('[OTP] SMTP failed and no fallback succeeded. Falling back to console preview.');
+    console.warn('[OTP] All delivery methods failed. Falling back to console preview.');
     console.log(`[OTP] Verification code for ${to}: ${otp}`);
     return { preview: true, fallback: true };
   }
@@ -165,7 +232,6 @@ async function sendVerificationOtpEmail({ to, otp }) {
 }
 
 async function sendPasswordResetEmail({ to, resetUrl }) {
-  const transporter = requireTransporter('Password reset link');
   const fromAddress =
     pickEnv('SMTP_FROM', 'EMAIL_FROM', 'MAIL_FROM', 'SMTP_USER', 'EMAIL_USER', 'MAIL_USER') ||
     'no-reply@example.com';
@@ -178,18 +244,42 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     html: `<p>You requested a password reset.</p><p><a href="${resetUrl}">Click here to set a new password</a></p><p>If you did not request this, you can ignore this email.</p>`,
   };
 
+  const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
+  const pass = String(passRaw).replace(/\s+/g, '');
+
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY)
+  if (pass.startsWith('xsmtpsib')) {
+    console.log('[RESET] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
+    try {
+      await sendEmailViaBrevoApi({
+        to,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        apiKey: pass,
+        fromEmail: fromAddress
+      });
+      console.log('[RESET] Email sent successfully via Brevo HTTPS API!');
+      return { preview: false };
+    } catch (err) {
+      console.error('[RESET] Brevo HTTPS API failed:', err && err.message ? err.message : err);
+    }
+  }
+
+  // 2. PRIMARY SMTP
+  const transporter = requireTransporter('Password reset link');
   let primaryFailed = false;
   if (transporter) {
     try {
       await transporter.sendMail(message);
       return { preview: false };
     } catch (err) {
-      console.warn('[RESET] Primary mailer failed. Attempting SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      console.warn('[RESET] Primary SMTP failed. Trying SMTPS Gmail fallback...', err && err.message ? err.message : err);
       primaryFailed = true;
     }
   }
 
-  // SMTPS Gmail Fallback
+  // 3. SMTPS GMAIL FALLBACK
   const fallbackTransporter = getFallbackTransporter();
   if (fallbackTransporter) {
     try {
@@ -202,10 +292,10 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     }
   }
 
-  // Preview Sandbox Fallback
+  // 4. PREVIEW SANDBOX
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (allowPreviewOnly || primaryFailed) {
-    console.warn('[RESET] SMTP failed and no fallback succeeded. Falling back to console preview.');
+    console.warn('[RESET] All delivery methods failed. Falling back to console preview.');
     console.log(`[RESET] Password reset link for ${to}: ${resetUrl}`);
     return { preview: true, fallback: true };
   }
@@ -214,7 +304,6 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
 }
 
 async function sendPasswordResetOtpEmail({ to, otp }) {
-  const transporter = requireTransporter('Password reset OTP');
   const fromAddress =
     pickEnv('SMTP_FROM', 'EMAIL_FROM', 'MAIL_FROM', 'SMTP_USER', 'EMAIL_USER', 'MAIL_USER') ||
     'no-reply@example.com';
@@ -227,18 +316,42 @@ async function sendPasswordResetOtpEmail({ to, otp }) {
     html: `<p>Use this code to reset your password: <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
   };
 
+  const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
+  const pass = String(passRaw).replace(/\s+/g, '');
+
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY)
+  if (pass.startsWith('xsmtpsib')) {
+    console.log('[RESET-OTP] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
+    try {
+      await sendEmailViaBrevoApi({
+        to,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        apiKey: pass,
+        fromEmail: fromAddress
+      });
+      console.log('[RESET-OTP] Email sent successfully via Brevo HTTPS API!');
+      return { preview: false };
+    } catch (err) {
+      console.error('[RESET-OTP] Brevo HTTPS API failed:', err && err.message ? err.message : err);
+    }
+  }
+
+  // 2. PRIMARY SMTP
+  const transporter = requireTransporter('Password reset OTP');
   let primaryFailed = false;
   if (transporter) {
     try {
       await transporter.sendMail(message);
       return { preview: false };
     } catch (err) {
-      console.warn('[RESET-OTP] Primary mailer failed. Attempting SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      console.warn('[RESET-OTP] Primary SMTP failed. Trying SMTPS Gmail fallback...', err && err.message ? err.message : err);
       primaryFailed = true;
     }
   }
 
-  // SMTPS Gmail Fallback
+  // 3. SMTPS GMAIL FALLBACK
   const fallbackTransporter = getFallbackTransporter();
   if (fallbackTransporter) {
     try {
@@ -251,10 +364,10 @@ async function sendPasswordResetOtpEmail({ to, otp }) {
     }
   }
 
-  // Preview Sandbox Fallback
+  // 4. PREVIEW SANDBOX
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (allowPreviewOnly || primaryFailed) {
-    console.warn('[RESET-OTP] SMTP failed and no fallback succeeded. Falling back to console preview.');
+    console.warn('[RESET-OTP] All delivery methods failed. Falling back to console preview.');
     console.log(`[RESET-OTP] Password reset OTP for ${to}: ${otp}`);
     return { preview: true, fallback: true };
   }
