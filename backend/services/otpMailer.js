@@ -146,19 +146,20 @@ async function sendVerificationOtpEmail({ to, otp }) {
     html: `<p>Your verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
   };
 
-  const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
-  const pass = String(passRaw).replace(/\s+/g, '');
+  const apiKeyRaw = pickEnv('BREVO_API_KEY', 'SENDINBLUE_API_KEY', 'SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
+  const apiKey = String(apiKeyRaw).replace(/\s+/g, '');
 
-  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY & SECURE)
-  if (pass.startsWith('xsmtpsib')) {
-    console.log('[OTP] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO - only use when an actual Brevo API key is present
+  // Brevo API keys start with 'xkeysib-'. SMTP passwords (xsmtpsib-) should continue to use SMTP.
+  if (apiKey.startsWith('xkeysib')) {
+    console.log('[OTP] Brevo API key detected. Bypassing SMTP and using secure HTTPS Web API...');
     try {
       await sendEmailViaBrevoApi({
         to,
         subject: message.subject,
         text: message.text,
         html: message.html,
-        apiKey: pass,
+        apiKey,
         fromEmail: fromAddress
       });
       console.log('[OTP] Email sent successfully via Brevo HTTPS API!');
@@ -205,19 +206,19 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     html: `<p>You requested a password reset.</p><p><a href="${resetUrl}">Click here to set a new password</a></p><p>If you did not request this, you can ignore this email.</p>`,
   };
 
-  const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
-  const pass = String(passRaw).replace(/\s+/g, '');
+  const apiKeyRaw = pickEnv('BREVO_API_KEY', 'SENDINBLUE_API_KEY', 'SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
+  const apiKey = String(apiKeyRaw).replace(/\s+/g, '');
 
-  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY & SECURE)
-  if (pass.startsWith('xsmtpsib')) {
-    console.log('[RESET] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO - only use when an actual Brevo API key is present
+  if (apiKey.startsWith('xkeysib')) {
+    console.log('[RESET] Brevo API key detected. Bypassing SMTP and using secure HTTPS Web API...');
     try {
       await sendEmailViaBrevoApi({
         to,
         subject: message.subject,
         text: message.text,
         html: message.html,
-        apiKey: pass,
+        apiKey,
         fromEmail: fromAddress
       });
       console.log('[RESET] Email sent successfully via Brevo HTTPS API!');
@@ -264,19 +265,19 @@ async function sendPasswordResetOtpEmail({ to, otp }) {
     html: `<p>Use this code to reset your password: <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
   };
 
-  const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
-  const pass = String(passRaw).replace(/\s+/g, '');
+  const apiKeyRaw = pickEnv('BREVO_API_KEY', 'SENDINBLUE_API_KEY', 'SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
+  const apiKey = String(apiKeyRaw).replace(/\s+/g, '');
 
-  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY & SECURE)
-  if (pass.startsWith('xsmtpsib')) {
-    console.log('[RESET-OTP] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO - only use when an actual Brevo API key is present
+  if (apiKey.startsWith('xkeysib')) {
+    console.log('[RESET-OTP] Brevo API key detected. Bypassing SMTP and using secure HTTPS Web API...');
     try {
       await sendEmailViaBrevoApi({
         to,
         subject: message.subject,
         text: message.text,
         html: message.html,
-        apiKey: pass,
+        apiKey,
         fromEmail: fromAddress
       });
       console.log('[RESET-OTP] Email sent successfully via Brevo HTTPS API!');
