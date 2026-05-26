@@ -12,6 +12,28 @@ const { sendVerificationOtpEmail, sendPasswordResetEmail, sendPasswordResetOtpEm
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+async function verifyGoogleIdToken(idToken) {
+  const primary = process.env.GOOGLE_CLIENT_ID ? [process.env.GOOGLE_CLIENT_ID] : [];
+  const extras = process.env.GOOGLE_CLIENT_IDS ? String(process.env.GOOGLE_CLIENT_IDS).split(',').map(s => s.trim()).filter(Boolean) : [];
+  const audiences = Array.from(new Set([...primary, ...extras]));
+  let lastErr = null;
+  for (const aud of audiences) {
+    try {
+      const ticket = await googleClient.verifyIdToken({ idToken, audience: aud });
+      return ticket;
+    } catch (err) {
+      // prefer to continue on audience mismatch, but propagate other errors
+      lastErr = err;
+      const msg = err && (err.message || err.toString()) || '';
+      if (msg.toLowerCase().includes('wrong recipient') || msg.toLowerCase().includes('payload audience')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || new Error('Google token verification failed');
+}
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 15,
@@ -44,6 +66,20 @@ function getFrontendBaseUrl() {
 
 function buildPasswordResetUrl(token) {
   return `${getFrontendBaseUrl()}/#/reset-password?token=${encodeURIComponent(token)}`;
+}
+
+function shouldShowPreview(req) {
+  const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
+  // If preview is allowed (local, sandboxed, or fallback mode), always return true
+  if (allowPreviewOnly) return true;
+  // always show in non-production (local dev)
+  if (process.env.NODE_ENV !== 'production') return true;
+
+  // require explicit request: header or query param
+  if (!req) return false;
+  const h = req.headers['x-otp-preview'] || req.headers['x-show-preview'] || req.query && req.query.otp_preview;
+  if (!h) return false;
+  return String(h) === '1' || String(h).toLowerCase() === 'true';
 }
 
 router.post('/register', authLimiter, async (req, res) => {
@@ -120,8 +156,7 @@ router.post('/register', authLimiter, async (req, res) => {
       userId: user._id,
       preview: !!(sendResult && sendResult.preview),
     };
-    // In development, include the OTP in the response when a transporter isn't configured
-    if (process.env.NODE_ENV !== 'production' && sendResult && sendResult.preview) {
+    if (shouldShowPreview(req) && sendResult && sendResult.preview) {
       responseBody.otp = otp;
     }
 
@@ -202,7 +237,7 @@ router.post('/resend-otp', authLimiter, async (req, res) => {
     const sendResult = await sendVerificationOtpEmail({ to: normalizedEmail, otp });
 
     const resp = { msg: 'Verification code resent', preview: !!(sendResult && sendResult.preview) };
-    if (process.env.NODE_ENV !== 'production' && sendResult && sendResult.preview) {
+    if (shouldShowPreview(req) && sendResult && sendResult.preview) {
       resp.otp = otp;
     }
 
@@ -254,9 +289,8 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 
     const normalizedEmail = String(email).trim().toLowerCase();
     const user = await User.findOne({ email: normalizedEmail });
-
     if (!user) {
-      return res.json({ msg: 'If the account exists, a reset link has been sent.' });
+      return res.status(404).json({ msg: 'Account not found' });
     }
 
     const rawToken = crypto.randomBytes(32).toString('hex');
@@ -269,7 +303,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
     const sendResult = await sendPasswordResetEmail({ to: normalizedEmail, resetUrl });
 
     const responseBody = { msg: 'If the account exists, a reset link has been sent.', preview: !!(sendResult && sendResult.preview) };
-    if (process.env.NODE_ENV !== 'production' && sendResult && sendResult.preview) {
+    if (shouldShowPreview(req) && sendResult && sendResult.preview) {
       responseBody.resetUrl = resetUrl;
     }
 
@@ -289,9 +323,8 @@ router.post('/forgot-password-otp', authLimiter, async (req, res) => {
 
     const normalizedEmail = String(email).trim().toLowerCase();
     const user = await User.findOne({ email: normalizedEmail });
-
     if (!user) {
-      return res.json({ msg: 'If the account exists, an OTP has been sent.', preview: false });
+      return res.status(404).json({ msg: 'Account not found' });
     }
 
     const otp = generateOtp();
@@ -302,7 +335,7 @@ router.post('/forgot-password-otp', authLimiter, async (req, res) => {
     const sendResult = await sendPasswordResetOtpEmail({ to: normalizedEmail, otp });
 
     const responseBody = { msg: 'If the account exists, an OTP has been sent.', preview: !!(sendResult && sendResult.preview) };
-    if (process.env.NODE_ENV !== 'production' && sendResult && sendResult.preview) {
+    if (shouldShowPreview(req) && sendResult && sendResult.preview) {
       responseBody.otp = otp;
     }
 
@@ -369,7 +402,7 @@ router.post('/google', authLimiter, async (req, res) => {
     const { idToken, username, password } = req.body;
     if (!idToken) return res.status(400).json({ msg: 'idToken is required' });
 
-    const ticket = await googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
+    const ticket = await verifyGoogleIdToken(idToken);
     const payload = ticket.getPayload();
     const email = String(payload.email || '').trim().toLowerCase();
     if (!email) return res.status(400).json({ msg: 'Google account has no email' });

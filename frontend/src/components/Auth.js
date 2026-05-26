@@ -320,15 +320,25 @@ function Auth({ onAuthSuccess }) {
           setResetRecoveryEmail(form.email.trim().toLowerCase());
           setRecoveryMethod('otp');
           setMode('reset-password');
-          setResetOtp('');
-          setSuccess(res.data.msg || 'If the account exists, an OTP has been sent.');
+            // If server provides a preview OTP (OTP_PREVIEW_ONLY), auto-fill it for the user
+            if (res.data && res.data.otp) {
+              setResetOtp(String(res.data.otp));
+              setSuccess(`${res.data.msg || 'OTP sent.'} Preview OTP: ${res.data.otp}`);
+            } else {
+              setResetOtp('');
+              setSuccess(res.data.msg || 'If the account exists, an OTP has been sent.');
+            }
           return;
         }
-
         const res = await axios.post(`${API_BASE}/api/auth/forgot-password`, {
           email: form.email.trim(),
         });
-        setSuccess(res.data.msg || 'If the account exists, a reset link has been sent.');
+        // If server provides a preview resetUrl (OTP_PREVIEW_ONLY), show it to the user
+        if (res.data && res.data.resetUrl) {
+          setSuccess(`${res.data.msg || 'Reset link generated.'} Preview URL: ${res.data.resetUrl}`);
+        } else {
+          setSuccess(res.data.msg || 'If the account exists, a reset link has been sent.');
+        }
         return;
       }
 
@@ -379,7 +389,12 @@ function Auth({ onAuthSuccess }) {
         setPendingEmail(res.data.email || form.email.trim());
         setMode('verify');
         setOtp('');
-        setSuccess(res.data.msg || 'Verification code sent to your email.');
+        if (res.data && res.data.otp) {
+          setOtp(String(res.data.otp));
+          setSuccess(`${res.data.msg || 'Verification code sent.'} Preview OTP: ${res.data.otp}`);
+        } else {
+          setSuccess(res.data.msg || 'Verification code sent to your email.');
+        }
         return;
       }
 
@@ -418,7 +433,17 @@ function Auth({ onAuthSuccess }) {
       nav('/chat', { replace: true });
     } catch (err) {
       const response = err.response?.data || {};
-      if (response.pendingVerification) {
+      // If backend indicates the account wasn't found, force logout and show login page
+      if (response && (response.msg === 'Account not found' || err.response?.status === 404)) {
+        try {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+        } catch {}
+        syncAuthHeader(null);
+        setMode('login');
+        nav('/', { replace: true });
+        setError(response.msg || 'Account not found');
+      } else if (response.pendingVerification) {
         setPendingEmail(response.email || form.email.trim());
         setMode('verify');
         setSuccess('Your account still needs email verification. Enter the OTP sent to your inbox.');
@@ -442,7 +467,12 @@ function Auth({ onAuthSuccess }) {
     setSuccess('');
     try {
       const res = await axios.post(`${API_BASE}/api/auth/resend-otp`, { email: pendingEmail });
-      setSuccess(res.data.msg || 'Verification code resent.');
+      if (res.data && res.data.otp) {
+        setOtp(String(res.data.otp));
+        setSuccess(`${res.data.msg || 'Verification code resent.'} Preview OTP: ${res.data.otp}`);
+      } else {
+        setSuccess(res.data.msg || 'Verification code resent.');
+      }
     } catch (err) {
       setError(err.response?.data?.msg || err.response?.data?.error || 'Failed to resend OTP');
     } finally {

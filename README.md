@@ -315,6 +315,13 @@ Email OTP / verification on Render:
 - You must set `SMTP_SERVICE` or `SMTP_HOST`, plus `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in the Render service environment variables.
 - If those variables are missing, OTP verification and reset emails will fail with a clear `SMTP_NOT_CONFIGURED` message.
 
+Completely free setup option:
+
+- Set `OTP_PREVIEW_ONLY=true` in the backend service environment.
+- In preview mode, the app will still generate verification OTPs and password-reset codes without SMTP.
+- The OTP or reset link is returned in the API response for development/testing, so you can use the app without any paid email provider.
+- This is useful on free Render plans, but it is not private production email delivery.
+
 ## 13. Security Notes
 
 - Passwords are hashed with bcrypt.

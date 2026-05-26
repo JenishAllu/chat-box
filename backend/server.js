@@ -47,6 +47,8 @@ app.use("/api/users", require("./routes/users"));
 app.use("/api/groups", require("./routes/groups"));
 // new messages routes for fetching history and marking seen
 app.use("/api/messages", require("./routes/messages"));
+// debug/test routes
+app.use("/api/debug", require("./routes/debug"));
 
 
 const server = http.createServer(app);
