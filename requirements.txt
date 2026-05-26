@@ -1,0 +1,1 @@
+# Blank requirements file to prevent Render language misdetection errors.

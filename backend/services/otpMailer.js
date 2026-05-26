@@ -11,10 +11,21 @@ function pickEnv(...keys) {
 }
 
 function getTransporter() {
-  const host = pickEnv('SMTP_HOST', 'EMAIL_HOST', 'MAIL_HOST');
+  let host = pickEnv('SMTP_HOST', 'EMAIL_HOST', 'MAIL_HOST');
   const service = pickEnv('SMTP_SERVICE', 'EMAIL_SERVICE', 'MAIL_SERVICE');
-  const port = Number(pickEnv('SMTP_PORT', 'EMAIL_PORT', 'MAIL_PORT') || 587);
-  const secureEnv = pickEnv('SMTP_SECURE', 'EMAIL_SECURE', 'MAIL_SECURE');
+  let port = Number(pickEnv('SMTP_PORT', 'EMAIL_PORT', 'MAIL_PORT') || 587);
+  let secureEnv = pickEnv('SMTP_SECURE', 'EMAIL_SECURE', 'MAIL_SECURE');
+  
+  // Smart override for Gmail on cloud hosts: force direct Port 465 SMTPS.
+  // This bypasses cloud firewall blocks on Port 587 and STARTTLS timeout handshakes.
+  let activeService = service;
+  if (service && String(service).toLowerCase() === 'gmail') {
+    host = 'smtp.gmail.com';
+    port = 465;
+    secureEnv = 'true';
+    activeService = null;
+  }
+
   const secure = secureEnv !== null
     ? String(secureEnv).toLowerCase() === 'true'
     : (port === 465);
@@ -24,7 +35,7 @@ function getTransporter() {
   // Some users paste app-passwords with spaces; remove whitespace to reduce errors
   const pass = passRaw ? String(passRaw).replace(/\s+/g, '') : passRaw;
 
-  if ((!host && !service) || !user || !pass) {
+  if ((!host && !activeService) || !user || !pass) {
     return null;
   }
 
@@ -37,11 +48,12 @@ function getTransporter() {
     greetingTimeout: 10000,
     tls: {
       rejectUnauthorized: false,
+      minVersion: 'TLSv1.2'
     },
   };
 
-  if (service) {
-    transportOptions.service = service;
+  if (activeService) {
+    transportOptions.service = activeService;
   } else {
     transportOptions.host = host;
     transportOptions.port = port;
