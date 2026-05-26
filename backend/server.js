@@ -5,7 +5,10 @@ const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const helmet = require("helmet");
+const mongoSanitize = require("express-mongo-sanitize");
 const Message = require("./models/Message");
+const socketAuth = require("./middleware/socketAuth");
 
 dotenv.config();
 const PORT = process.env.PORT || 5000;
@@ -16,7 +19,9 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.log(err));
 
 const app = express();
+app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin: CLIENT_ORIGIN === "*" ? true : CLIENT_ORIGIN }));
+app.use(mongoSanitize());
 // allow larger payloads for image uploads (base64 data URLs)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
@@ -38,44 +43,47 @@ const io = new Server(server, {
   maxHttpBufferSize: 50 * 1024 * 1024 // 50MB for large file uploads
 });
 
+io.use(socketAuth);
+
 // helper to create a consistent room identifier for two user ids
 function getRoom(a, b) { return [a, b].sort().join("_"); }
 
 // track online users: { userId: socketId }
 const onlineUsers = {};
 
-io.on("connection", (socket) => {
-  // when a user connects, they emit their userId
+async function initializeSocketUser(socket) {
+  const user = socket.data.user;
+  if (!user?._id) return;
+
+  onlineUsers[String(user._id)] = socket.id;
+
+  const onlineMap = {};
+  Object.keys(onlineUsers).forEach(id => { onlineMap[id] = true; });
+  socket.emit('onlineList', onlineMap);
+  io.emit('userOnline', { userId: String(user._id), isOnline: true, user });
+
+  try {
+    const Group = require("./models/Group");
+    const userGroups = await Group.find({ members: user._id });
+    userGroups.forEach(g => socket.join(g._id.toString()));
+  } catch (err) {
+    console.error("Error joining groups:", err);
+  }
+}
+
+io.on("connection", async (socket) => {
+  await initializeSocketUser(socket);
+
+  // Backward compatible no-op: identity now comes from JWT auth.
   socket.on("setUserId", async (userId) => {
-    onlineUsers[userId] = socket.id;
-
-    // fetch the user's details to broadcast to live clients
-    try {
-      const User = require("./models/User");
-      const user = await User.findById(userId).select("_id username avatar");
-      // broadcast online status with full profile to attach them to sidebars dynamically
-      io.emit("userOnline", { userId, isOnline: true, user });
-    } catch (err) {
-      console.error("Error fetching user on connect:", err);
-      io.emit("userOnline", { userId, isOnline: true });
-    }
-
-    // send current online list to the newly connected socket so it can initialize
-    const onlineMap = {};
-    Object.keys(onlineUsers).forEach(id => { onlineMap[id] = true; });
-    socket.emit('onlineList', onlineMap);
-    
-    // Join all group rooms
-    try {
-      const Group = require("./models/Group");
-      const userGroups = await Group.find({ members: userId });
-      userGroups.forEach(g => socket.join(g._id.toString()));
-    } catch (err) {
-      console.error("Error joining groups:", err);
+    if (socket.data.user && String(socket.data.user._id) !== String(userId)) {
+      return;
     }
   });
 
-  socket.on("joinRoom", ({ userId, otherUserId }) => {
+  socket.on("joinRoom", ({ otherUserId }) => {
+    const userId = socket.data.user?._id;
+    if (!userId || !otherUserId) return;
     const room = getRoom(userId, otherUserId);
     socket.join(room);
   });
@@ -88,7 +96,9 @@ io.on("connection", (socket) => {
   socket.on("sendChatRequest", async ({ from, to }) => {
     try {
       const User = require("./models/User");
-      const sender = await User.findById(from).select('_id username avatar');
+      const senderId = socket.data.user?._id;
+      if (!senderId || String(senderId) !== String(from)) return;
+      const sender = await User.findById(senderId).select('_id username avatar verified reputation isBlocked');
       const recipientSocketId = onlineUsers[to];
       if (recipientSocketId) {
         io.to(recipientSocketId).emit("chatRequestReceived", { from: sender });
@@ -102,7 +112,9 @@ io.on("connection", (socket) => {
   socket.on("chatRequestAccepted", async ({ from, to }) => {
     try {
       const User = require("./models/User");
-      const accepter = await User.findById(from).select('_id username avatar');
+      const senderId = socket.data.user?._id;
+      if (!senderId || String(senderId) !== String(from)) return;
+      const accepter = await User.findById(senderId).select('_id username avatar verified reputation isBlocked');
       const recipientSocketId = onlineUsers[to];
       if (recipientSocketId) {
         io.to(recipientSocketId).emit("chatAccepted", { by: accepter });
@@ -114,13 +126,15 @@ io.on("connection", (socket) => {
 
   socket.on("sendMessage", async (data) => {
     try {
-      const { from, to, message, media, replyTo, isGroup, forwardedFrom } = data;
+      const senderId = socket.data.user?._id;
+      const { to, message, media, replyTo, isGroup, forwardedFrom } = data;
+      if (!senderId) return;
 
       if (!isGroup) {
         const User = require("./models/User");
         const recipient = await User.findById(to);
-        const sender = await User.findById(from);
-        if (recipient && recipient.blocked && recipient.blocked.includes(from)) {
+        const sender = await User.findById(senderId);
+        if (recipient && recipient.blocked && recipient.blocked.includes(senderId)) {
           return socket.emit("errorMessage", { error: "Message not delivered" });
         }
         if (sender && sender.blocked && sender.blocked.includes(to)) {
@@ -128,11 +142,11 @@ io.on("connection", (socket) => {
         }
         // Gate DMs: both must have accepted each other
         const senderAccepted = sender && sender.acceptedChats && sender.acceptedChats.map(String).includes(String(to));
-        const recipientAccepted = recipient && recipient.acceptedChats && recipient.acceptedChats.map(String).includes(String(from));
+        const recipientAccepted = recipient && recipient.acceptedChats && recipient.acceptedChats.map(String).includes(String(senderId));
         if (!senderAccepted || !recipientAccepted) {
           const pendingMsg = await Message.create({
-            room: getRoom(from, to),
-            from,
+            room: getRoom(senderId, to),
+            from: senderId,
             to,
             message,
             seen: false,
@@ -146,11 +160,11 @@ io.on("connection", (socket) => {
 
           await User.findByIdAndUpdate(to, {
             $addToSet: {
-              chatRequests: from,
+              chatRequests: senderId,
             },
             $push: {
               requestHistory: {
-                from,
+                from: senderId,
                 status: 'pending',
                 requestedAt: new Date(),
                 respondedAt: null,
@@ -166,8 +180,8 @@ io.on("connection", (socket) => {
         }
       }
 
-      const room = isGroup ? to : getRoom(from, to);
-      const msgData = { room, from, to, message, seen: false, isGroup: isGroup || false, requestStatus: 'accepted' };
+      const room = isGroup ? to : getRoom(senderId, to);
+      const msgData = { room, from: senderId, to, message, seen: false, isGroup: isGroup || false, requestStatus: 'accepted' };
       if (media) {
         msgData.media = media;
       }
@@ -203,7 +217,7 @@ io.on("connection", (socket) => {
     try {
       if (!id) return;
       const updatedMsg = await Message.findByIdAndUpdate(id, { seen: true }, { new: true });
-      if (updatedMsg) {
+      if (updatedMsg && String(updatedMsg.to) === String(socket.data.user?._id)) {
         io.to(updatedMsg.room).emit("messageSeen", updatedMsg._id);
       }
     } catch (err) {
@@ -215,7 +229,7 @@ io.on("connection", (socket) => {
     try {
       if (!id || !newText) return;
       const updatedMsg = await Message.findByIdAndUpdate(id, { message: newText, isEdited: true }, { new: true });
-      if (updatedMsg) {
+      if (updatedMsg && String(updatedMsg.from) === String(socket.data.user?._id)) {
         io.to(updatedMsg.room).emit("messageEdited", updatedMsg);
       }
     } catch (err) {
@@ -225,16 +239,18 @@ io.on("connection", (socket) => {
 
   socket.on("deleteMessage", async ({ id, type, userId }) => {
     try {
-      if (!id || !userId) return;
+      const senderId = socket.data.user?._id;
+      if (!id || !senderId) return;
+      if (userId && String(userId) !== String(senderId)) return;
       if (type === 'everyone') {
         const deletedMsg = await Message.findByIdAndDelete(id);
-        if (deletedMsg) {
+        if (deletedMsg && String(deletedMsg.from) === String(senderId)) {
           io.to(deletedMsg.room).emit("messageDeleted", { id, room: deletedMsg.room, type: 'everyone' });
         }
       } else {
-        const updatedMsg = await Message.findByIdAndUpdate(id, { $addToSet: { deletedBy: userId } }, { new: true });
+        const updatedMsg = await Message.findByIdAndUpdate(id, { $addToSet: { deletedBy: senderId } }, { new: true });
         if (updatedMsg) {
-          io.to(updatedMsg.room).emit("messageDeleted", { id, room: updatedMsg.room, type: 'me', userId });
+          io.to(updatedMsg.room).emit("messageDeleted", { id, room: updatedMsg.room, type: 'me', userId: senderId });
         }
       }
     } catch (err) {
@@ -244,44 +260,49 @@ io.on("connection", (socket) => {
 
   socket.on("clearChat", async ({ room, type, userId }) => {
     try {
-      if (!room || !userId) return;
+      const senderId = socket.data.user?._id;
+      if (!room || !senderId) return;
+      if (userId && String(userId) !== String(senderId)) return;
       if (type === 'everyone') {
         await Message.deleteMany({ room });
         io.to(room).emit("chatCleared", { room, type: 'everyone' });
       } else {
-        await Message.updateMany({ room }, { $addToSet: { deletedBy: userId } });
-        io.to(room).emit("chatCleared", { room, type: 'me', userId });
+        await Message.updateMany({ room }, { $addToSet: { deletedBy: senderId } });
+        io.to(room).emit("chatCleared", { room, type: 'me', userId: senderId });
       }
     } catch (err) {
       console.error("Socket error on clearChat", err);
     }
   });
   socket.on("markAllSeen", ({ userId, otherUserId }) => {
-    const room = getRoom(userId, otherUserId);
+    const senderId = socket.data.user?._id;
+    if (!senderId || String(senderId) !== String(userId)) return;
+    const room = getRoom(senderId, otherUserId);
     // emit to everyone else in the room (the sender whose messages were just seen)
     socket.to(room).emit("allMessagesSeen", { viewerId: userId });
   });
 
   socket.on("typing", ({ from, to }) => {
-    const room = getRoom(from, to);
+    const senderId = socket.data.user?._id;
+    if (!senderId || String(senderId) !== String(from)) return;
+    const room = getRoom(senderId, to);
     // broadcast typing status to the room (which includes the recipient)
-    socket.to(room).emit("typing", { from });
+    socket.to(room).emit("typing", { from: senderId });
   });
 
   socket.on("stopTyping", ({ from, to }) => {
-    const room = getRoom(from, to);
-    socket.to(room).emit("stopTyping", { from });
+    const senderId = socket.data.user?._id;
+    if (!senderId || String(senderId) !== String(from)) return;
+    const room = getRoom(senderId, to);
+    socket.to(room).emit("stopTyping", { from: senderId });
   });
 
   socket.on("disconnect", () => {
     // find and remove this user from onlineUsers
-    for (const userId in onlineUsers) {
-      if (onlineUsers[userId] === socket.id) {
-        delete onlineUsers[userId];
-        // broadcast offline status
-        io.emit("userOffline", { userId, isOnline: false });
-        break;
-      }
+    const userId = socket.data.user?._id;
+    if (userId && onlineUsers[String(userId)] === socket.id) {
+      delete onlineUsers[String(userId)];
+      io.emit("userOffline", { userId: String(userId), isOnline: false });
     }
   });
 

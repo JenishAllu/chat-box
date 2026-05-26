@@ -3,7 +3,13 @@ const router = require("express").Router();
 const User = require("../models/User");
 const Message = require("../models/Message");
 const Group = require("../models/Group");
+const Report = require("../models/Report");
 const bcrypt = require("bcryptjs");
+const auth = require("../middleware/auth");
+const { applyTrustUpdate } = require("../utils/accountTrust");
+const { sanitizeUser } = require("../utils/sanitizeUser");
+
+router.use(auth);
 
 function getRoom(a, b) {
   return [a, b].sort().join('_');
@@ -37,10 +43,19 @@ async function resolveLatestPendingHistory(targetId, requesterId, status) {
   }
 }
 
+function requireSelf(req, res, targetId) {
+  if (String(req.user._id) !== String(targetId)) {
+    res.status(403).json({ error: 'You can only access your own account data' });
+    return false;
+  }
+  return true;
+}
+
 // GET user by ID
 router.get("/:id", async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select("-password");
+    if (!requireSelf(req, res, req.params.id)) return;
+    const user = await User.findById(req.params.id).select("-password -emailOtp -otpExpiry");
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
   } catch (err) {
@@ -51,7 +66,8 @@ router.get("/:id", async (req, res) => {
 // GET accepted chats for a user
 router.get("/:id/accepted-chats", async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).populate('acceptedChats', '-password');
+    if (!requireSelf(req, res, req.params.id)) return;
+    const user = await User.findById(req.params.id).populate('acceptedChats', '-password -emailOtp -otpExpiry');
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user.acceptedChats || []);
   } catch (err) {
@@ -63,7 +79,8 @@ router.get("/:id/accepted-chats", async (req, res) => {
 // GET chat requests for a user
 router.get("/:id/chat-requests", async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).populate('chatRequests', '-password');
+    if (!requireSelf(req, res, req.params.id)) return;
+    const user = await User.findById(req.params.id).populate('chatRequests', '-password -emailOtp -otpExpiry');
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user.chatRequests || []);
   } catch (err) {
@@ -87,7 +104,7 @@ router.get("/search", async (req, res) => {
       filter._id = { $ne: excludeId };
     }
     
-    const users = await User.find(filter).select("-password").limit(50);
+    const users = await User.find(filter).select("-password -emailOtp -otpExpiry").limit(50);
     res.json(users);
   } catch (err) {
     console.error(err);
@@ -98,7 +115,8 @@ router.get("/search", async (req, res) => {
 // GET user suggestions (users not followed, not blocked, not self)
 router.get("/:id/suggestions", async (req, res) => {
   try {
-    const me = await User.findById(req.params.id).select("-password");
+    if (!requireSelf(req, res, req.params.id)) return;
+    const me = await User.findById(req.params.id).select("-password -emailOtp -otpExpiry");
     if (!me) return res.status(404).json({ error: "User not found" });
 
 
@@ -110,7 +128,7 @@ router.get("/:id/suggestions", async (req, res) => {
 
     const suggestions = await User.find({
       _id: { $nin: excludeIds },
-    }).select("-password").limit(20);
+    }).select("-password -emailOtp -otpExpiry").limit(20);
 
     res.json(suggestions);
   } catch (err) {
@@ -122,6 +140,7 @@ router.get("/:id/suggestions", async (req, res) => {
 // GET request history for a user
 router.get('/:id/request-history', async (req, res) => {
   try {
+    if (!requireSelf(req, res, req.params.id)) return;
     const user = await User.findById(req.params.id)
       .populate('requestHistory.from', 'username avatar')
       .select('requestHistory');
@@ -142,9 +161,10 @@ router.get('/:id/request-history', async (req, res) => {
 // PUT update avatar
 router.put('/:id/avatar', async (req, res) => {
   try {
+    if (!requireSelf(req, res, req.params.id)) return;
     const { avatar } = req.body;
     await User.findByIdAndUpdate(req.params.id, { avatar });
-    const user = await User.findById(req.params.id).select('-password');
+    const user = await User.findById(req.params.id).select('-password -emailOtp -otpExpiry');
     return res.json(user);
   } catch (err) {
     console.error(err);
@@ -156,6 +176,7 @@ router.put('/:id/avatar', async (req, res) => {
 router.put('/:id/follow/:targetId', async (req, res) => {
   try {
     const { id, targetId } = req.params;
+    if (!requireSelf(req, res, id)) return;
     if (id === targetId) return res.status(400).json({ error: "Cannot follow yourself" });
 
     const target = await User.findById(targetId).select('blocked');
@@ -168,7 +189,7 @@ router.put('/:id/follow/:targetId', async (req, res) => {
       id,
       { $addToSet: { pendingFollowing: targetId } },
       { new: true }
-    ).select('-password');
+    ).select('-password -emailOtp -otpExpiry');
 
     // Send chat request to target; follow relation will be created on acceptance.
     await User.findByIdAndUpdate(targetId, {
@@ -187,11 +208,12 @@ router.put('/:id/follow/:targetId', async (req, res) => {
 router.put('/:id/unfollow/:targetId', async (req, res) => {
   try {
     const { id, targetId } = req.params;
+    if (!requireSelf(req, res, id)) return;
     const user = await User.findByIdAndUpdate(
       id,
       { $pull: { following: targetId, pendingFollowing: targetId } },
       { new: true }
-    ).select('-password');
+    ).select('-password -emailOtp -otpExpiry');
     await User.findByIdAndUpdate(targetId, { $pull: { followers: id, chatRequests: id } });
     await addRequestHistory(targetId, id, 'unfollowed');
     res.json(user);
@@ -204,6 +226,7 @@ router.put('/:id/unfollow/:targetId', async (req, res) => {
 router.put('/:id/request-chat/:targetId', async (req, res) => {
   try {
     const { id, targetId } = req.params;
+    if (!requireSelf(req, res, id)) return;
     if (id === targetId) return res.status(400).json({ error: "Cannot request yourself" });
 
     // Check if target has blocked requester
@@ -216,7 +239,7 @@ router.put('/:id/request-chat/:targetId', async (req, res) => {
     // Add request to target's chatRequests
     await User.findByIdAndUpdate(targetId, { $addToSet: { chatRequests: id } });
     await addRequestHistory(targetId, id);
-    const user = await User.findById(id).select('-password');
+    const user = await User.findById(id).select('-password -emailOtp -otpExpiry');
     res.json(user);
   } catch (err) {
     console.error(err);
@@ -228,6 +251,7 @@ router.put('/:id/request-chat/:targetId', async (req, res) => {
 router.put('/:id/accept-chat/:requesterId', async (req, res) => {
   try {
     const { id, requesterId } = req.params;
+    if (!requireSelf(req, res, id)) return;
 
     const targetUpdate = {
       $pull: { chatRequests: requesterId },
@@ -239,7 +263,7 @@ router.put('/:id/accept-chat/:requesterId', async (req, res) => {
       id,
       targetUpdate,
       { new: true }
-    ).select('-password');
+    ).select('-password -emailOtp -otpExpiry');
 
     const requesterUpdate = {
       $addToSet: { acceptedChats: id, following: id },
@@ -267,12 +291,13 @@ router.put('/:id/accept-chat/:requesterId', async (req, res) => {
 router.put('/:id/decline-chat/:requesterId', async (req, res) => {
   try {
     const { id, requesterId } = req.params;
+    if (!requireSelf(req, res, id)) return;
 
     const user = await User.findByIdAndUpdate(
       id,
       { $pull: { chatRequests: requesterId } },
       { new: true }
-    ).select('-password');
+    ).select('-password -emailOtp -otpExpiry');
     await User.findByIdAndUpdate(requesterId, { $pull: { pendingFollowing: id } });
     await Message.updateMany(
       { room: getRoom(id, requesterId), isRequest: true, requestStatus: 'pending' },
@@ -291,10 +316,11 @@ router.put('/:id/decline-chat/:requesterId', async (req, res) => {
 router.put('/:id/block/:targetId', async (req, res) => {
   try {
     const { id, targetId } = req.params;
+    if (!requireSelf(req, res, id)) return;
     const user = await User.findByIdAndUpdate(id, {
       $addToSet: { blocked: targetId },
       $pull: { following: targetId, pendingFollowing: targetId, followers: targetId, acceptedChats: targetId, chatRequests: targetId },
-    }, { new: true }).select('-password');
+    }, { new: true }).select('-password -emailOtp -otpExpiry');
     await User.findByIdAndUpdate(targetId, {
       $pull: { following: id, pendingFollowing: id, followers: id, acceptedChats: id, chatRequests: id },
     });
@@ -307,11 +333,12 @@ router.put('/:id/block/:targetId', async (req, res) => {
 // PUT update profile (displayName + bio)
 router.put('/:id/profile', async (req, res) => {
   try {
+    if (!requireSelf(req, res, req.params.id)) return;
     const { displayName, bio } = req.body;
     const update = {};
     if (displayName !== undefined) update.displayName = displayName;
     if (bio !== undefined) update.bio = bio;
-    const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).select('-password -emailOtp -otpExpiry');
     res.json(user);
   } catch (err) {
     console.error(err);
@@ -322,17 +349,30 @@ router.put('/:id/profile', async (req, res) => {
 // PUT change account password
 router.put('/:id/password', async (req, res) => {
   try {
+    if (!requireSelf(req, res, req.params.id)) return;
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+    if (!newPassword) {
+      return res.status(400).json({ error: 'newPassword is required' });
     }
 
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const matches = await bcrypt.compare(currentPassword, user.password);
-    if (!matches) {
-      return res.status(400).json({ error: 'Current password is incorrect' });
+    const hasLocalPassword = Boolean(user.password);
+
+    // If the account already has a local password stored, always require
+    // the caller to provide `currentPassword` and validate it. This
+    // applies to both regular and OAuth-created accounts once a local
+    // password has been set (the OAuth-created password becomes the
+    // canonical current password for subsequent update/delete actions).
+    if (hasLocalPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'currentPassword is required' });
+      }
+      const matches = await bcrypt.compare(currentPassword, user.password);
+      if (!matches) {
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
@@ -349,17 +389,23 @@ router.put('/:id/password', async (req, res) => {
 // DELETE account and clean related references
 router.delete('/:id', async (req, res) => {
   try {
+    if (!requireSelf(req, res, req.params.id)) return;
     const { currentPassword } = req.body;
-    if (!currentPassword) {
-      return res.status(400).json({ error: 'currentPassword is required' });
-    }
-
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const matches = await bcrypt.compare(currentPassword, user.password);
-    if (!matches) {
-      return res.status(400).json({ error: 'Current password is incorrect' });
+    const hasLocalPassword = Boolean(user.password);
+    // Require currentPassword verification only if the account has a
+    // local password stored. OAuth-only accounts without a local
+    // password can be deleted while authenticated via token.
+    if (hasLocalPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'currentPassword is required' });
+      }
+      const matches = await bcrypt.compare(currentPassword, user.password);
+      if (!matches) {
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
     }
 
     await Message.deleteMany({ $or: [{ from: req.params.id }, { to: req.params.id }] });
@@ -402,7 +448,8 @@ router.delete('/:id', async (req, res) => {
 // GET list of blocked users (populated)
 router.get('/:id/blocked', async (req, res) => {
   try {
-    const me = await User.findById(req.params.id).populate('blocked', '-password');
+    if (!requireSelf(req, res, req.params.id)) return;
+    const me = await User.findById(req.params.id).populate('blocked', '-password -emailOtp -otpExpiry');
     if (!me) return res.status(404).json({ error: 'User not found' });
     res.json(me.blocked || []);
   } catch (err) {
@@ -415,15 +462,74 @@ router.get('/:id/blocked', async (req, res) => {
 router.put('/:id/unblock/:targetId', async (req, res) => {
   try {
     const { id, targetId } = req.params;
+    if (!requireSelf(req, res, id)) return;
     const user = await User.findByIdAndUpdate(
       id,
       { $pull: { blocked: targetId } },
       { new: true }
-    ).select('-password');
+    ).select('-password -emailOtp -otpExpiry');
     res.json(user);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to unblock user' });
+  }
+});
+
+// POST report a user
+router.post('/report', async (req, res) => {
+  try {
+    const reporterId = req.user._id;
+    const { targetId, reason, details } = req.body;
+
+    if (!targetId || !reason) {
+      return res.status(400).json({ error: 'targetId and reason are required' });
+    }
+
+    if (String(reporterId) === String(targetId)) {
+      return res.status(400).json({ error: 'You cannot report yourself' });
+    }
+
+    const target = await User.findById(targetId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const existing = await Report.findOne({ reporter: reporterId, target: targetId });
+    if (existing) {
+      return res.status(409).json({ error: 'You already reported this user' });
+    }
+
+    target.reports = Number(target.reports || 0) + 1;
+    target.warnings = Number(target.warnings || 0) + 1;
+    target.reputation = Math.max(0, Number(target.reputation || 100) - 20);
+    applyTrustUpdate(target, { reason: 'report' });
+    if (target.reports >= 5 || target.reputation <= 40 || target.suspiciousScore >= 80) {
+      target.isBlocked = true;
+    }
+    await target.save();
+
+    const report = await Report.create({
+      reporter: reporterId,
+      target: targetId,
+      reason: String(reason).trim(),
+      details: String(details || '').trim(),
+      riskSnapshot: {
+        suspiciousScore: target.suspiciousScore || 0,
+        accountRiskLevel: target.accountRiskLevel || 'low',
+      },
+    });
+
+    return res.status(201).json({
+      message: 'Report submitted',
+      report,
+      target: sanitizeUser(target),
+    });
+  } catch (err) {
+    console.error(err);
+    if (err.code === 11000) {
+      return res.status(409).json({ error: 'You already reported this user' });
+    }
+    return res.status(500).json({ error: 'Failed to submit report' });
   }
 });
 

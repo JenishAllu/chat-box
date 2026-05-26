@@ -89,6 +89,13 @@ Core capabilities:
 - Added image compression before upload.
 - Added avatar upload for users and groups.
 
+### 2.2.1 Password Recovery Flow
+- Added a full forgot-password and reset-password workflow.
+- Forgot-password sends a reset link by email instead of revealing whether the account exists.
+- Reset-password validates a time-limited token and lets the user choose a new password.
+- The frontend includes a dedicated reset screen that opens from the emailed link.
+- The backend stores a hashed reset token and expiry on the user record so links can be verified securely.
+
 ### 2.3 Encryption Changes (Current Working Model)
 - Messages are encrypted on client before sending and decrypted on client after receiving.
 - Server stores encrypted payload and never decrypts message text.
@@ -98,6 +105,22 @@ Core capabilities:
 - This model ensures both sender and receiver can decrypt the same ciphertext.
 - This specifically fixes the issue where receiver previously saw encrypted text like U2FsdGVkX1...
 
+### 2.4 Local Development vs Render Deployment Note
+- The app can run successfully on Render while still failing locally if the frontend dev server does not bind a reachable port.
+- In this workspace, the backend was already healthy on port 5000, but the original `react-scripts start` flow compiled without exposing a reachable `localhost:3000` listener.
+- The current local workaround is to build the frontend and serve the production bundle from `0.0.0.0:3000` so the browser can connect reliably.
+- This note is intentionally additive and does not replace the earlier deployment or runtime documentation.
+
+Problem and recovery:
+- Problem: the frontend dev server looked healthy because CRA reported a successful compile, but it never exposed a usable local listener for the browser.
+- Recovery: we replaced that startup path with a build-and-serve flow that reliably binds to `0.0.0.0:3000` in this workspace.
+- Result: the site now opens locally the same way a normal hosted deployment does, while keeping the older documentation intact.
+
+### 2.5 Recent Auth Updates
+- Google OAuth now uses a login-first flow with a username prompt only for new accounts.
+- Password recovery now uses emailed reset links and a separate reset-password route.
+- OTP emails and password reset emails both use the shared mail transport helper and support `SMTP_*`, `EMAIL_*`, and `MAIL_*` env names.
+
 ## 3. End-to-End Runtime Flow
 
 ### 3.1 Authentication Flow
@@ -105,6 +128,14 @@ Core capabilities:
 2. Frontend posts to /api/auth/register or /api/auth/login.
 3. Backend hashes/compares password and returns JWT + user object.
 4. Frontend stores user object in localStorage and navigates to /chat.
+
+### 3.1.1 Password Recovery Flow
+1. User clicks Forgot Password in Auth.js.
+2. Frontend posts email to `/api/auth/forgot-password`.
+3. Backend creates a time-limited reset token, stores only the hash, and emails a reset link.
+4. User opens the reset link and lands on `/reset-password` in the frontend.
+5. Frontend posts token + new password to `/api/auth/reset-password`.
+6. Backend validates the token, hashes the new password, clears the reset token, and saves the user.
 
 ### 3.2 Real-Time Connection Flow
 1. Chat.js mounts and loads user/groups/unread data using REST APIs.
@@ -162,6 +193,15 @@ Endpoints:
   - Validates required fields.
   - Checks user by email and bcrypt password comparison.
   - Returns JWT + user.
+- POST /forgot-password
+  - Generates a reset token, stores a hash and expiry, and emails a reset link.
+  - Does not reveal whether the email exists.
+- POST /reset-password
+  - Validates a time-limited reset token.
+  - Hashes the new password, clears the reset fields, and saves the user.
+- POST /google
+  - Verifies Google ID tokens.
+  - Logs in existing Google users or asks for a username for new Google accounts.
 
 ## 4.3 backend/routes/users.js
 Endpoints and behavior:
@@ -233,6 +273,13 @@ Fields:
 - avatar, displayName, bio
 - following, followers, blocked
 - pendingFollowing, chatRequests, acceptedChats
+- passwordResetTokenHash, passwordResetTokenExpiry
+
+### backend/services/otpMailer.js
+Email helpers:
+- `sendVerificationOtpEmail()` sends the registration OTP.
+- `sendPasswordResetEmail()` sends the password reset link.
+- Both helpers support SMTP env aliases and print a preview link in development when SMTP is not configured.
 
 ### backend/models/Group.js
 Fields:
@@ -329,6 +376,29 @@ Messages:
 - GET /api/messages/:userId/:otherId?isGroup=true|false
 - POST /api/messages/seen
 - GET /api/messages/unread/:userId
+
+## 11. Recent Change Log (Yesterday and Today)
+
+### Yesterday
+
+- Added Google OAuth verification on the backend with `google-auth-library`.
+- Extended the user model with `googleId` so Google-linked accounts can be stored and reused.
+- Added SMTP environment fallbacks in the OTP mailer so mail delivery works with `SMTP_*`, `EMAIL_*`, or `MAIL_*` env names.
+- Added rollback logic for failed registrations so partially created accounts do not block username/email reuse.
+- Documented the backend mail configuration and the new Google OAuth env values.
+
+### Today
+
+- Added the Google OAuth sign-in button to the frontend auth screen for both login and registration.
+- Added the Google client ID to the backend and frontend environment files in this workspace.
+- Kept the OAuth flow login-first and only asked for a username when a Google account is new.
+- Fixed the frontend stylesheet parse error that appeared after the OAuth button UI was added.
+- Confirmed the project uses Google Identity Services popup/button flow, so redirect URIs are not required for the current implementation.
+
+### Notes for future updates
+
+- Preserve older sections when appending new change logs.
+- Add new auth, deployment, or UX changes to this section instead of overwriting previous documentation.
 
 ## 7. Socket Event Reference
 

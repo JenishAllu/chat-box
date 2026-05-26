@@ -1,6 +1,9 @@
 const router = require('express').Router();
 const Message = require('../models/Message');
 const User = require('../models/User');
+const auth = require('../middleware/auth');
+
+router.use(auth);
 
 // helper for creating a consistent room id between two users
 function getRoom(a, b) {
@@ -11,6 +14,9 @@ function getRoom(a, b) {
 router.post('/seen', async (req, res) => {
   try {
     const { userId, otherId } = req.body;
+    if (String(req.user._id) !== String(userId)) {
+      return res.status(403).json({ error: 'You can only mark your own messages as seen' });
+    }
     const room = getRoom(userId, otherId);
     await Message.updateMany({ room, to: userId, seen: false }, { seen: true });
     return res.sendStatus(200);
@@ -23,6 +29,9 @@ router.post('/seen', async (req, res) => {
 // get unread message counts per sender for a given user
 router.get('/unread/:userId', async (req, res) => {
   try {
+    if (String(req.user._id) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const unseen = await Message.aggregate([
       {
         $match: { to: req.params.userId, seen: false, $or: [{ isRequest: { $ne: true } }, { requestStatus: 'accepted' }] }
@@ -46,6 +55,9 @@ router.get('/unread/:userId', async (req, res) => {
 // get pending message requests grouped by sender
 router.get('/requests/:userId', async (req, res) => {
   try {
+    if (String(req.user._id) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const pending = await Message.aggregate([
       {
         $match: {
@@ -88,6 +100,9 @@ router.get('/requests/:userId', async (req, res) => {
 // return all messages for a conversation (sorted by creation time)
 router.get('/:userId/:otherId', async (req, res) => {
   try {
+    if (String(req.user._id) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const { isGroup } = req.query;
     let room;
     if (isGroup === 'true') {

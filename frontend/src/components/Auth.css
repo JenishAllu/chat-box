@@ -49,9 +49,44 @@ body {
   height: 500px;
   background: rgba(0, 212, 255, 0.2);
   bottom: -150px;
-  right: -150px;
-  animation-duration: 14s;
+.google-auth-button {
   animation-direction: alternate-reverse;
+  min-height: 48px;
+  padding: 14px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+  align-items: center;
+  gap: 10px;
+  transition: all 0.25s ease;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+}
+
+.google-auth-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.google-auth-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.google-auth-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.google-button-slot {
+  min-height: 44px;
 }
 
 @keyframes floatOrb {
@@ -138,6 +173,27 @@ body {
   box-shadow: 0 0 15px rgba(255, 59, 48, 0.2);
 }
 
+.auth-success {
+  background: rgba(110, 231, 183, 0.12);
+  border: 1px solid rgba(110, 231, 183, 0.28);
+  color: #8bf0c7;
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 24px;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.auth-step-note {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
 @keyframes shakeGlow {
   10%, 90% { transform: translate3d(-2px, 0, 0); }
   20%, 80% { transform: translate3d(4px, 0, 0); }
@@ -208,6 +264,31 @@ body {
   box-shadow: 0 10px 25px rgba(58, 123, 213, 0.4), inset 0 -3px 0 rgba(0,0,0,0.1);
   position: relative;
   overflow: hidden;
+}
+
+.auth-secondary {
+  width: 100%;
+  padding: 14px;
+  margin-top: -8px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  transition: all 0.25s ease;
+}
+
+.auth-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.auth-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .auth-submit::after {
@@ -286,6 +367,86 @@ body {
 .auth-footer .toggle-link:hover::after {
   transform: scaleX(1);
   transform-origin: left;
+}
+
+.google-auth-wrap {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.google-divider {
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.google-button-slot {
+  min-height: 40px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  max-width: 260px;
+}
+
+.auth-recovery-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.auth-recovery-method {
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.auth-recovery-method:hover {
+  border-color: rgba(0, 210, 255, 0.4);
+  background: rgba(0, 210, 255, 0.08);
+}
+
+.auth-recovery-method.active {
+  border-color: rgba(0, 210, 255, 0.55);
+  background: rgba(0, 210, 255, 0.16);
+  color: #ffffff;
+}
+
+.auth-forgot-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -8px;
+}
+
+.auth-forgot-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: #00d2ff;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auth-forgot-link:hover {
+  color: #ffffff;
+  text-shadow: 0 0 10px rgba(0, 210, 255, 0.75);
+}
+
+.google-loading-note {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
 }
 
 /* Spinner */

@@ -72,6 +72,11 @@ Why this was used:
 
 - POST /api/auth/register
 - POST /api/auth/login
+- POST /api/auth/forgot-password
+- POST /api/auth/reset-password
+- POST /api/auth/google
+- POST /api/auth/verify-otp
+- POST /api/auth/resend-otp
 
 ### Users
 
@@ -241,11 +246,41 @@ Backend expected variables:
 - MONGO_URI
 - JWT_SECRET
 - PORT (optional, default 5000)
+- SMTP_HOST or SMTP_SERVICE
+- SMTP_PORT (optional, default 587)
+- SMTP_SECURE (optional, true/false)
+- SMTP_USER
+- SMTP_PASS
+- SMTP_FROM (optional)
+
+Mail variable aliases also supported:
+
+- EMAIL_HOST / EMAIL_SERVICE / EMAIL_PORT / EMAIL_SECURE / EMAIL_USER / EMAIL_PASS / EMAIL_FROM
+- MAIL_HOST / MAIL_SERVICE / MAIL_PORT / MAIL_SECURE / MAIL_USER / MAIL_PASS / MAIL_FROM
+
+Example (Gmail):
+
+- SMTP_SERVICE=gmail
+- SMTP_USER=your_email@gmail.com
+- SMTP_PASS=your_gmail_app_password
+- SMTP_FROM=your_email@gmail.com
 
 Frontend expected variables:
 
 - REACT_APP_API_URL
 - REACT_APP_SOCKET_URL
+- REACT_APP_GOOGLE_CLIENT_ID
+
+Optional frontend/base URL used in password reset emails:
+
+- FRONTEND_URL
+- CLIENT_ORIGIN
+
+Google sign-in:
+
+- The login page renders a Google button when `REACT_APP_GOOGLE_CLIENT_ID` is set.
+- Existing Google users are signed in directly.
+- New Google users are prompted to choose a username before the account is created.
 
 ## 13. Security Notes
 
@@ -257,6 +292,30 @@ Frontend expected variables:
 ## 14. Documentation Files
 
 Additional project docs:
+
+## 14.1 Local vs Production Startup Note
+
+The app can behave differently in local development compared with the Render deployment.
+
+Problem:
+- On Render, the app worked because it was running as a production deployment with managed ports and environment variables.
+- Locally, the frontend dev server printed a successful compile, but `localhost:3000` still refused the connection, so the browser had nothing reachable to load.
+
+What worked on Render:
+- Render runs the app as a production deployment with managed environment variables and ports.
+- The frontend is served from a built bundle, so the browser reaches a real HTTP server.
+
+What was happening locally:
+- The original frontend dev server command reported a successful compile, but the browser still got `ERR_CONNECTION_REFUSED` on `localhost:3000`.
+- The backend was already healthy on port 5000, so the main issue was the frontend not binding a reachable local listener.
+
+How we overcame it:
+- We changed the frontend start path so it first builds the app and then serves the production bundle from `0.0.0.0:3000`.
+- This made the local setup behave like a normal reachable web server instead of relying on the unstable dev-server bind in this workspace.
+
+Current local workaround:
+- The frontend `start` script now builds the app and serves the production build on `0.0.0.0:3000`.
+- This makes local behavior closer to the Render deployment and keeps the site reachable in this workspace.
 
 - DOCUMENTATION.md (deep technical documentation)
 - CODE_EXPLANATION.md (beginner-friendly explanation)
@@ -278,3 +337,23 @@ Recently completed:
 ---
 
 For full architecture and deep implementation details, see DOCUMENTATION.md, FULL_PROJECT_DEEP_DIVE.md, and ARCHITECTURE_FLOW_DIAGRAM.md.
+
+## 16. Recent Change Log (Yesterday and Today)
+
+### Yesterday
+
+- Added Google OAuth backend support in `backend/routes/auth.js` using `google-auth-library`.
+- Added `googleId` to the `User` model so Google accounts can be linked safely.
+- Added backend SMTP fallback support so OTPs can be sent with either `SMTP_*`, `EMAIL_*`, or `MAIL_*` environment variables.
+- Updated registration flow so failed registrations roll back the created user record, freeing username and email for reuse.
+- Documented backend mail environment variables and Google auth settings.
+
+### Today
+
+- Added a visible Google OAuth sign-in button to the auth screen on both login and register pages.
+- Added the Google client ID to backend and frontend env files for this workspace.
+- Kept the Google OAuth flow login-first, then prompt for a username only when the Google account is new.
+- Fixed a frontend CSS compile issue in `Auth.css` after adding the OAuth button UI.
+- Clarified the exact Google Cloud Console settings for this project: JavaScript origin `http://localhost:3000` and no redirect URI for the popup flow.
+- Added a full password recovery flow with `forgot-password` and `reset-password` routes.
+- Added email-based password reset links and a dedicated reset screen in the frontend.

@@ -1,6 +1,9 @@
 const router = require('express').Router();
 const Group = require('../models/Group');
 const mongoose = require('mongoose');
+const auth = require('../middleware/auth');
+
+router.use(auth);
 
 function populateGroup(query) {
   return query
@@ -25,6 +28,9 @@ function isGroupAdmin(group, userId) {
 router.post('/', async (req, res) => {
   try {
     const { name, members, creatorId } = req.body;
+    if (String(req.user._id) !== String(creatorId)) {
+      return res.status(403).json({ error: 'Creator must match authenticated user' });
+    }
     if (!name || !creatorId) {
       return res.status(400).json({ error: 'name and creatorId are required' });
     }
@@ -51,6 +57,9 @@ router.post('/', async (req, res) => {
 // Get all groups for a user
 router.get('/:userId', async (req, res) => {
   try {
+    if (String(req.user._id) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const groups = await populateGroup(Group.find({ members: req.params.userId }));
     return res.json(groups);
   } catch (err) {
@@ -87,6 +96,9 @@ router.put('/:groupId/name', async (req, res) => {
 const addMembersHandler = async (req, res) => {
   try {
     const { requesterId, memberIds } = req.body;
+    if (String(req.user._id) !== String(requesterId)) {
+      return res.status(403).json({ error: 'Requester must match authenticated user' });
+    }
     if (!requesterId || !Array.isArray(memberIds) || memberIds.length === 0) {
       return res.status(400).json({ error: 'requesterId and memberIds are required' });
     }
@@ -129,6 +141,9 @@ router.post('/:groupId/member/add', addMembersHandler);
 const removeMembersHandler = async (req, res) => {
   try {
     const { requesterId, memberId } = req.body;
+    if (String(req.user._id) !== String(requesterId)) {
+      return res.status(403).json({ error: 'Requester must match authenticated user' });
+    }
     if (!requesterId || !memberId) {
       return res.status(400).json({ error: 'requesterId and memberId are required' });
     }
@@ -161,6 +176,9 @@ router.post('/:groupId/members/remove', removeMembersHandler);
 const transferAdminHandler = async (req, res) => {
   try {
     const { requesterId, newAdminId } = req.body;
+    if (String(req.user._id) !== String(requesterId)) {
+      return res.status(403).json({ error: 'Requester must match authenticated user' });
+    }
     if (!requesterId || !newAdminId) {
       return res.status(400).json({ error: 'requesterId and newAdminId are required' });
     }

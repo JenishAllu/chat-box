@@ -109,6 +109,72 @@ body {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4)
 }
 
+.verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(0, 210, 255, 0.16), rgba(58, 123, 213, 0.18));
+  border: 1px solid rgba(0, 210, 255, 0.22);
+  color: #74d8ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.verified-badge__icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #74d8ff;
+  color: #04131d;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.verified-badge__text {
+  text-transform: uppercase;
+}
+
+.report-user-btn {
+  width: 100%;
+  border: 1px solid rgba(255, 107, 107, 0.28);
+  border-radius: 12px;
+  background: rgba(255, 107, 107, 0.08);
+  color: #ff9a9a;
+  font-weight: 700;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.report-user-btn:hover {
+  background: rgba(255, 107, 107, 0.14);
+  border-color: rgba(255, 107, 107, 0.42);
+}
+
+.report-modal {
+  max-width: 420px;
+}
+
+.report-modal-title {
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.report-modal-user {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
 .user-avatar {
   width: 40px;
   height: 40px;

@@ -142,3 +142,31 @@ To truly understand how everything connects, let's trace *exactly* what happens 
 - The server then echoes **`receiveSeen`** specifically back to *you*. Your screen magically catches it and flips the tiny label under your green bubble from "Sent" to "Seen".
 
 All 5 of these steps happen in a fraction of a second, completely bypassing traditional, slow webpage loading. That is the ultimate power of this Real-Time modern architecture!
+
+---
+
+## Part 7: New Changes Added Recently
+
+### Google OAuth Login
+- The login/register screen now includes a Google sign-in button.
+- If the Google account already exists, the app logs the user in immediately.
+- If it is a new Google account, the app asks for a username before creating the account.
+
+### OTP Email Delivery
+- Registration still sends a verification code to email.
+- The backend now supports more mail environment variable names so OTP email delivery works even if the config uses `SMTP_*`, `EMAIL_*`, or `MAIL_*` names.
+
+### Safe Registration Retry
+- If registration fails after the account is created, the app deletes that partial user record.
+- This lets the user try again with the same username and email.
+
+### Important Project Settings
+- Google OAuth uses the frontend origin `http://localhost:3000` in this workspace.
+- The current Google flow uses a popup/button style sign-in, so redirect URIs are not required for this setup.
+
+### Forget Password and Reset Password
+- The login screen now has a "Forgot password?" link.
+- When someone types their email, the backend sends a reset link to that email.
+- The reset link opens a reset page where the user chooses a new password.
+- The app checks the reset token so old or fake links cannot be used.
+- The backend stores only a hashed version of the reset token, not the raw token itself.

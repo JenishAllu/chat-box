@@ -39,6 +39,7 @@ function App(){
   return(
     <HashRouter>
       <Routes>
+        <Route path="/reset-password" element={<Auth onAuthSuccess={handleAuthSuccess} />}/>
         <Route path="/" element={isAuthenticated ? <Navigate to="/chat" replace /> : <Auth onAuthSuccess={handleAuthSuccess} />}/>
         <Route path="/chat" element={isAuthenticated ? <Chat onLogout={handleLogout} /> : <Navigate to="/" replace />}/>
         <Route path="*" element={<Navigate to={isAuthenticated ? "/chat" : "/"} replace />} />

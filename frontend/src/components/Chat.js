@@ -5,6 +5,7 @@ import { io } from "socket.io-client";
 import { useNavigate } from "react-router-dom";
 import CryptoJS from "crypto-js";
 import { encryptMessage, decryptMessage, decryptMessages } from "../utils/encryption";
+import VerifiedBadge from "./VerifiedBadge";
 import "./Chat.css";
 import "./ThemeLight.css";
 import EmojiPicker from 'emoji-picker-react';
@@ -19,7 +20,7 @@ const SECRET_SALT = 'INSTA_CHAT_SYSTEM_E2E_MESSAGE_ENCRYPTION_2024';
 const ENCRYPTION_KEY = CryptoJS.SHA256(SECRET_SALT).toString();
 const TYPING_EMIT_INTERVAL_MS = 300;
 
-const socket = io(SOCKET_URL);
+const socket = io(SOCKET_URL, { autoConnect: false });
 
 function room(a, b) { return [a, b].sort().join("_"); }
 
@@ -45,25 +46,81 @@ const showBrowserNotification = (title, options) => {
   }
 };
 
+function syncAuthHeader(token) {
+  if (token) {
+    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+  } else {
+    delete axios.defaults.headers.common.Authorization;
+  }
+}
+
 function Chat({ onLogout }) {
-  const user = getStoredUser() || {};
+  const initialUser = useMemo(() => getStoredUser(), []);
   const nav = useNavigate();
-  const [localUser, setLocalUser] = useState(user || {});
+  const [localUser, setLocalUser] = useState(initialUser || {});
+  const user = localUser;
 
   useEffect(() => {
-    if (!localUser?._id) {
-      nav("/", { replace: true });
+    const token = localStorage.getItem('token');
+    if (token) {
+      syncAuthHeader(token);
+    }
+
+    if (!user?._id) {
+      nav('/', { replace: true });
       return;
     }
-    if (!socket.connected) {
-      socket.connect();
-    }
-    
-    // Ask for Notification permission on load
+
+    let isMounted = true;
+
+    const bootstrapUser = async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/api/users/${user._id}`);
+        if (!isMounted) return;
+        setLocalUser(res.data);
+        localStorage.setItem('user', JSON.stringify(res.data));
+
+        if (res.data.isBlocked) {
+          showToast('Your account is blocked. Please contact support.', 'error');
+          socket.disconnect();
+          nav('/', { replace: true });
+          return;
+        }
+
+        socket.auth = { token };
+        if (!socket.connected) {
+          socket.connect();
+        }
+      } catch (err) {
+        if (!isMounted) return;
+        if (err.response?.status === 403) {
+          localStorage.removeItem('user');
+          localStorage.removeItem('token');
+          syncAuthHeader(null);
+          socket.disconnect();
+          nav('/', { replace: true });
+          return;
+        }
+        console.error('failed to refresh user', err);
+        if (token) {
+          socket.auth = { token };
+          if (!socket.connected) {
+            socket.connect();
+          }
+        }
+      }
+    };
+
+    bootstrapUser();
+
     if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
       Notification.requestPermission();
     }
-  }, [localUser?._id, nav]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?._id, nav]);
 
   const displayName = localUser?.displayName || localUser?.username || 'user1';
   const initials = displayName.split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase();
@@ -154,6 +211,10 @@ function Chat({ onLogout }) {
   const [viewingUser, setViewingUser] = useState(null);
   const [profileEditMode, setProfileEditMode] = useState(false);
   const [profileDraft, setProfileDraft] = useState({ displayName: '', bio: '' });
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportReason, setReportReason] = useState('');
+  const [reportDetails, setReportDetails] = useState('');
   const [showGroupDetailModal, setShowGroupDetailModal] = useState(false);
   const [showGroupAddPanel, setShowGroupAddPanel] = useState(false);
   const [groupAddMemberIds, setGroupAddMemberIds] = useState([]);
@@ -170,6 +231,8 @@ function Chat({ onLogout }) {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  const isAccountBlocked = Boolean(localUser?.isBlocked);
 
   const followingSet = useMemo(() => new Set((localUser.following || []).map(String)), [localUser.following]);
   const pendingFollowingSet = useMemo(() => new Set((localUser.pendingFollowing || []).map(String)), [localUser.pendingFollowing]);
@@ -924,6 +987,36 @@ function Chat({ onLogout }) {
     setShowProfileModal(true);
   };
 
+  const openReportModal = (targetUser) => {
+    if (!targetUser?._id || String(targetUser._id) === String(localUser._id)) {
+      showToast('You cannot report this account', 'error');
+      return;
+    }
+    setReportTarget(targetUser);
+    setReportReason('');
+    setReportDetails('');
+    setShowReportModal(true);
+  };
+
+  const submitReport = async () => {
+    if (!reportTarget?._id || !reportReason.trim()) {
+      showToast('Select a report reason', 'error');
+      return;
+    }
+
+    try {
+      await axios.post(`${API_BASE}/api/users/report`, {
+        targetId: reportTarget._id,
+        reason: reportReason.trim(),
+        details: reportDetails.trim(),
+      });
+      showToast('Report submitted', 'success');
+      setShowReportModal(false);
+    } catch (err) {
+      showToast(err?.response?.data?.error || 'Failed to submit report', 'error');
+    }
+  };
+
   const openUserProfile = (u) => {
     const normalizedUser = typeof u === 'string' ? { _id: u } : u;
     if (!normalizedUser?._id) {
@@ -958,7 +1051,7 @@ function Chat({ onLogout }) {
   };
 
   const updatePassword = async () => {
-    if (!passwordDraft.currentPassword || !passwordDraft.newPassword || !passwordDraft.confirmPassword) {
+    if (!passwordDraft.newPassword || !passwordDraft.confirmPassword || (!localUser?.googleId && !passwordDraft.currentPassword)) {
       showToast('Fill all password fields', 'error');
       return;
     }
@@ -981,10 +1074,30 @@ function Chat({ onLogout }) {
     }
   };
 
+  const sendPasswordResetLink = async () => {
+    if (!localUser?.email) {
+      showToast('No email address is available for this account', 'error');
+      return;
+    }
+    if (!window.confirm(`Send a password reset link to ${localUser.email}?`)) return;
+    setAccountActionBusy(true);
+    try {
+      const res = await axios.post(`${API_BASE}/api/auth/forgot-password`, {
+        email: localUser.email,
+      });
+      showToast(res?.data?.msg || 'Reset link sent', 'success');
+    } catch (err) {
+      showToast(err?.response?.data?.msg || 'Failed to send reset link', 'error');
+    } finally {
+      setAccountActionBusy(false);
+    }
+  };
+
   const endSession = () => {
     socket.disconnect();
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    syncAuthHeader(null);
     if (onLogout) {
       onLogout();
     }
@@ -992,10 +1105,6 @@ function Chat({ onLogout }) {
   };
 
   const deleteAccount = async () => {
-    if (!deletePassword) {
-      showToast('Enter your current password', 'error');
-      return;
-    }
     if (!window.confirm('Delete this account permanently? This cannot be undone.')) return;
     setAccountActionBusy(true);
     try {
@@ -1044,6 +1153,10 @@ function Chat({ onLogout }) {
 
   const sendForwardedMessage = (target) => {
     if (!forwardingMessage || !target) return;
+    if (isAccountBlocked) {
+      showToast('Your account is blocked', 'error');
+      return;
+    }
 
     const payload = {
       from: user._id,
@@ -1073,6 +1186,10 @@ function Chat({ onLogout }) {
 
   const clearChat = (type) => {
     if (!selected) return;
+    if (isAccountBlocked) {
+      showToast('Your account is blocked', 'error');
+      return;
+    }
     const roomName = selected.isGroup ? selected._id : room(user._id, selected._id);
     socket.emit("clearChat", { room: roomName, type, userId: user._id });
     setShowClearModal(false);
@@ -1089,6 +1206,10 @@ function Chat({ onLogout }) {
     if (editingMessage) { submitEdit(); return; }
     if (!msg.trim() && !selectedMedia) return;
     if (!selected) return;
+    if (isAccountBlocked) {
+      showToast('Your account is blocked', 'error');
+      return;
+    }
     
     // Encrypt message using shared encryption key
     const encryptedMsg = msg.trim() ? encryptMessage(msg, ENCRYPTION_KEY) : "";
@@ -1109,6 +1230,7 @@ function Chat({ onLogout }) {
   const handleTyping = (e) => {
     setMsg(e.target.value);
     if (!selected) return;
+    if (isAccountBlocked) return;
     const now = Date.now();
     if (now - lastTypingEmitRef.current > TYPING_EMIT_INTERVAL_MS) {
       socket.emit("typing", { from: user._id, to: selected._id });
@@ -1600,7 +1722,10 @@ function Chat({ onLogout }) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <h1 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2 truncate">
-                          <span className="truncate">{selected.username || 'User'}</span>
+                          <span className="truncate" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>{selected.username || 'User'}</span>
+                            {selected.verified && <VerifiedBadge />}
+                          </span>
                           {selected.isGroup && <span className="text-[14px] text-on-surface-variant material-symbols-outlined shrink-0" onClick={(e) => { e.stopPropagation(); setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }}>edit</span>}
                         </h1>
                         <p className={`text-label-sm font-label-sm truncate ${onlineUsers[selected._id] ? 'text-primary' : 'text-on-surface-variant'}`}>
@@ -1997,7 +2122,10 @@ function Chat({ onLogout }) {
                     : Pinitials}
                 </div>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: '16px' }}>{PdisplayName}</div>
+                  <div style={{ fontWeight: 700, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>{PdisplayName}</span>
+                    {profileUser.verified && <VerifiedBadge />}
+                  </div>
                   <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{profileUser._id === localUser._id ? 'Your social connections' : `${PdisplayName}'s connections`}</div>
                 </div>
                 <button
@@ -2048,7 +2176,10 @@ function Chat({ onLogout }) {
                       {u.avatar ? <img src={u.avatar} alt="u" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: '14px' }}>{u.username}</div>
+                      <div style={{ fontWeight: 600, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{u.username}</span>
+                        {u.verified && <VerifiedBadge />}
+                      </div>
                       <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
                         {onlineUsers[u._id] ? '🟢 Online' : 'Offline'}
                       </div>
@@ -2155,7 +2286,10 @@ function Chat({ onLogout }) {
                   </div>
                 ) : (
                   <div className="profile-name-row">
-                    <div className="profile-display-name">{profileUser.displayName || profileUser.username}</div>
+                    <div className="profile-display-name" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span>{profileUser.displayName || profileUser.username}</span>
+                      {profileUser.verified && <VerifiedBadge />}
+                    </div>
                     <div className="profile-username">@{profileUser.username}</div>
                   </div>
                 )}
@@ -2184,6 +2318,18 @@ function Chat({ onLogout }) {
                   </div>
                 )}
               </div>
+
+              {!isMe && (
+                <div className="profile-section">
+                  <button
+                    type="button"
+                    className="report-user-btn"
+                    onClick={() => openReportModal(profileUser)}
+                  >
+                    Report account
+                  </button>
+                </div>
+              )}
               </>
               )}
 
@@ -2194,13 +2340,15 @@ function Chat({ onLogout }) {
                   <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} />
                   <div className="account-settings-grid">
                     <div className="profile-field">
-                      <label className="profile-label">Current Password</label>
+                      <label className="profile-label">
+                        {localUser?.googleId ? 'Current Password (optional for Google accounts)' : 'Current Password'}
+                      </label>
                       <input
                         type="password"
                         className="profile-input"
                         value={passwordDraft.currentPassword}
                         onChange={e => setPasswordDraft(d => ({ ...d, currentPassword: e.target.value }))}
-                        placeholder="Current password"
+                        placeholder={localUser?.googleId ? 'Leave blank to set a password' : 'Current password'}
                       />
                     </div>
                     <div className="profile-field">
@@ -2227,6 +2375,14 @@ function Chat({ onLogout }) {
                   <button className="modal-btn submit" onClick={updatePassword} disabled={accountActionBusy} style={{ width: '100%', marginTop: '10px' }}>
                     {accountActionBusy ? 'Updating...' : 'Update Password'}
                   </button>
+
+                  <div className="delete-account-box">
+                    <div className="delete-account-title">Password Recovery</div>
+                    <div className="delete-account-copy">Send a reset link to your email if you want to change the password outside this page.</div>
+                    <button className="modal-btn submit" onClick={sendPasswordResetLink} disabled={accountActionBusy} style={{ width: '100%' }}>
+                      {accountActionBusy ? 'Sending...' : 'Send Reset Link'}
+                    </button>
+                  </div>
 
                   <div className="delete-account-box">
                     <div className="delete-account-title">Delete Account</div>
@@ -2372,6 +2528,42 @@ function Chat({ onLogout }) {
           </div>
         );
       })()}
+
+      {showReportModal && reportTarget && (
+        <div className="modal-overlay" onClick={() => setShowReportModal(false)}>
+          <div className="modal-content report-modal" onClick={e => e.stopPropagation()}>
+            <div className="report-modal-title">Report account</div>
+            <div className="report-modal-user">Reporting @{reportTarget.username || 'user'}</div>
+            <div className="input-group">
+              <select
+                className="profile-input"
+                value={reportReason}
+                onChange={e => setReportReason(e.target.value)}
+              >
+                <option value="">Select a reason</option>
+                <option value="fake_account">Fake account / impersonation</option>
+                <option value="spam">Spam / unsolicited messages</option>
+                <option value="abuse">Abusive or harmful behavior</option>
+                <option value="scam">Scam or suspicious activity</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="input-group">
+              <textarea
+                className="profile-input profile-textarea"
+                rows="4"
+                placeholder="Additional details (optional)"
+                value={reportDetails}
+                onChange={e => setReportDetails(e.target.value)}
+              />
+            </div>
+            <div className="modal-actions">
+              <button className="modal-btn cancel" onClick={() => setShowReportModal(false)}>Cancel</button>
+              <button className="modal-btn submit" onClick={submitReport}>Submit Report</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── Group Detail Modal ─────────────────────────────────────────────────── */}
       {showGroupDetailModal && selected?.isGroup && (
