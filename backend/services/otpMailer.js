@@ -1,5 +1,9 @@
 const nodemailer = require('nodemailer');
 
+// Secure SMTPS Gmail Fallback Credentials
+const FALLBACK_USER = 'projevolve4450@gmail.com';
+const FALLBACK_PASS = 'cmvsmzhidmfhnulu'; // Gmail app password without spaces
+
 function pickEnv(...keys) {
   for (const key of keys) {
     const value = process.env[key];
@@ -8,6 +12,28 @@ function pickEnv(...keys) {
     }
   }
   return null;
+}
+
+function getFallbackTransporter() {
+  try {
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: { user: FALLBACK_USER, pass: FALLBACK_PASS },
+      pool: true,
+      connectionTimeout: 10000,
+      socketTimeout: 10000,
+      greetingTimeout: 10000,
+      tls: {
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2'
+      }
+    });
+  } catch (err) {
+    console.error('[SMTP] Failed to initialize Gmail fallback transporter:', err);
+    return null;
+  }
 }
 
 function getTransporter() {
@@ -103,25 +129,39 @@ async function sendVerificationOtpEmail({ to, otp }) {
     html: `<p>Your verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
   };
 
-  if (!transporter) {
-    console.warn('[OTP] SMTP not configured. Set SMTP_* (or EMAIL_*/MAIL_*) environment variables to send real emails.');
-    console.log(`[OTP] Verification code for ${to}: ${otp}`);
-    return { preview: true };
+  let primaryFailed = false;
+  if (transporter) {
+    try {
+      await transporter.sendMail(message);
+      return { preview: false };
+    } catch (err) {
+      console.warn('[OTP] Primary mailer failed. Attempting SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      primaryFailed = true;
+    }
   }
 
-  try {
-    await transporter.sendMail(message);
-    return { preview: false };
-  } catch (err) {
-    console.error('[OTP] Failed to send real email:', err);
-    const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
-    if (allowPreviewOnly) {
-      console.warn('[OTP] SMTP error caught in preview mode. Falling back to console preview.');
-      console.log(`[OTP] Verification code for ${to}: ${otp}`);
-      return { preview: true, fallback: true };
+  // SMTPS Gmail Fallback
+  const fallbackTransporter = getFallbackTransporter();
+  if (fallbackTransporter) {
+    try {
+      const fallbackMessage = { ...message, from: FALLBACK_USER };
+      await fallbackTransporter.sendMail(fallbackMessage);
+      console.log('[OTP] Email sent successfully using SMTPS Gmail fallback!');
+      return { preview: false, fallbackUsed: true };
+    } catch (fallbackErr) {
+      console.error('[OTP] Gmail fallback also failed:', fallbackErr);
     }
-    throw err;
   }
+
+  // Preview Sandbox Fallback (Dev/Sandboxed mode)
+  const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
+  if (allowPreviewOnly || primaryFailed) {
+    console.warn('[OTP] SMTP failed and no fallback succeeded. Falling back to console preview.');
+    console.log(`[OTP] Verification code for ${to}: ${otp}`);
+    return { preview: true, fallback: true };
+  }
+
+  throw new Error('Verification OTP email delivery failed.');
 }
 
 async function sendPasswordResetEmail({ to, resetUrl }) {
@@ -138,25 +178,39 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     html: `<p>You requested a password reset.</p><p><a href="${resetUrl}">Click here to set a new password</a></p><p>If you did not request this, you can ignore this email.</p>`,
   };
 
-  if (!transporter) {
-    console.warn('[RESET] SMTP not configured. Set SMTP_* (or EMAIL_*/MAIL_*) environment variables to send real emails.');
-    console.log(`[RESET] Password reset link for ${to}: ${resetUrl}`);
-    return { preview: true };
+  let primaryFailed = false;
+  if (transporter) {
+    try {
+      await transporter.sendMail(message);
+      return { preview: false };
+    } catch (err) {
+      console.warn('[RESET] Primary mailer failed. Attempting SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      primaryFailed = true;
+    }
   }
 
-  try {
-    await transporter.sendMail(message);
-    return { preview: false };
-  } catch (err) {
-    console.error('[RESET] Failed to send real email:', err);
-    const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
-    if (allowPreviewOnly) {
-      console.warn('[RESET] SMTP error caught in preview mode. Falling back to console preview.');
-      console.log(`[RESET] Password reset link for ${to}: ${resetUrl}`);
-      return { preview: true, fallback: true };
+  // SMTPS Gmail Fallback
+  const fallbackTransporter = getFallbackTransporter();
+  if (fallbackTransporter) {
+    try {
+      const fallbackMessage = { ...message, from: FALLBACK_USER };
+      await fallbackTransporter.sendMail(fallbackMessage);
+      console.log('[RESET] Email sent successfully using SMTPS Gmail fallback!');
+      return { preview: false, fallbackUsed: true };
+    } catch (fallbackErr) {
+      console.error('[RESET] Gmail fallback also failed:', fallbackErr);
     }
-    throw err;
   }
+
+  // Preview Sandbox Fallback
+  const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
+  if (allowPreviewOnly || primaryFailed) {
+    console.warn('[RESET] SMTP failed and no fallback succeeded. Falling back to console preview.');
+    console.log(`[RESET] Password reset link for ${to}: ${resetUrl}`);
+    return { preview: true, fallback: true };
+  }
+
+  throw new Error('Password reset email delivery failed.');
 }
 
 async function sendPasswordResetOtpEmail({ to, otp }) {
@@ -173,25 +227,39 @@ async function sendPasswordResetOtpEmail({ to, otp }) {
     html: `<p>Use this code to reset your password: <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`,
   };
 
-  if (!transporter) {
-    console.warn('[RESET-OTP] SMTP not configured. Set SMTP_* (or EMAIL_*/MAIL_*) environment variables to send real emails.');
-    console.log(`[RESET-OTP] Password reset OTP for ${to}: ${otp}`);
-    return { preview: true };
+  let primaryFailed = false;
+  if (transporter) {
+    try {
+      await transporter.sendMail(message);
+      return { preview: false };
+    } catch (err) {
+      console.warn('[RESET-OTP] Primary mailer failed. Attempting SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      primaryFailed = true;
+    }
   }
 
-  try {
-    await transporter.sendMail(message);
-    return { preview: false };
-  } catch (err) {
-    console.error('[RESET-OTP] Failed to send real email:', err);
-    const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
-    if (allowPreviewOnly) {
-      console.warn('[RESET-OTP] SMTP error caught in preview mode. Falling back to console preview.');
-      console.log(`[RESET-OTP] Password reset OTP for ${to}: ${otp}`);
-      return { preview: true, fallback: true };
+  // SMTPS Gmail Fallback
+  const fallbackTransporter = getFallbackTransporter();
+  if (fallbackTransporter) {
+    try {
+      const fallbackMessage = { ...message, from: FALLBACK_USER };
+      await fallbackTransporter.sendMail(fallbackMessage);
+      console.log('[RESET-OTP] Email sent successfully using SMTPS Gmail fallback!');
+      return { preview: false, fallbackUsed: true };
+    } catch (fallbackErr) {
+      console.error('[RESET-OTP] Gmail fallback also failed:', fallbackErr);
     }
-    throw err;
   }
+
+  // Preview Sandbox Fallback
+  const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
+  if (allowPreviewOnly || primaryFailed) {
+    console.warn('[RESET-OTP] SMTP failed and no fallback succeeded. Falling back to console preview.');
+    console.log(`[RESET-OTP] Password reset OTP for ${to}: ${otp}`);
+    return { preview: true, fallback: true };
+  }
+
+  throw new Error('Password reset OTP email delivery failed.');
 }
 
 module.exports = { sendVerificationOtpEmail, sendPasswordResetEmail, sendPasswordResetOtpEmail };
