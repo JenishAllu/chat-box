@@ -9,8 +9,11 @@ const helmet = require("helmet");
 const mongoSanitize = require("express-mongo-sanitize");
 const Message = require("./models/Message");
 const socketAuth = require("./middleware/socketAuth");
+const path = require("path");
 
-dotenv.config();
+// Load environment variables using absolute path of backend/.env
+dotenv.config({ path: path.join(__dirname, ".env") });
+
 const PORT = process.env.PORT || 5000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "*";
 
@@ -25,9 +28,20 @@ function parseOrigins(value) {
 
 const allowedOrigins = parseOrigins(process.env.CLIENT_ORIGINS || CLIENT_ORIGIN);
 
+// Validate MONGO_URI on startup to prevent silent synchronous crashes
+if (!process.env.MONGO_URI) {
+  console.error("======================================================================");
+  console.error("CRITICAL ERROR: MONGO_URI is not defined in the environment variables!");
+  console.error("Please configure MONGO_URI in your Render / AWS / Local environment.");
+  console.error("======================================================================");
+  process.exit(1);
+}
+
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err));
+  .catch(err => {
+    console.error("MongoDB Connection Failed:", err);
+  });
 
 const app = express();
 app.use(helmet({ crossOriginResourcePolicy: false }));
