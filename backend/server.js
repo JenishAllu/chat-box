@@ -302,6 +302,40 @@ io.on("connection", async (socket) => {
       console.error("Socket error on clearChat", err);
     }
   });
+
+  socket.on("messageReaction", async ({ id, emoji, userId, username }) => {
+    try {
+      if (!id || !emoji || !userId || !username) return;
+      const msg = await Message.findById(id);
+      if (!msg) return;
+
+      if (!msg.reactions) {
+        msg.reactions = [];
+      }
+
+      const existingReactionIndex = msg.reactions.findIndex(
+        r => String(r.userId) === String(userId) && r.emoji === emoji
+      );
+
+      if (existingReactionIndex !== -1) {
+        msg.reactions.splice(existingReactionIndex, 1);
+      } else {
+        const userPrevReactionIndex = msg.reactions.findIndex(
+          r => String(r.userId) === String(userId)
+        );
+        if (userPrevReactionIndex !== -1) {
+          msg.reactions.splice(userPrevReactionIndex, 1);
+        }
+        msg.reactions.push({ userId, username, emoji });
+      }
+
+      await msg.save();
+      io.to(msg.room).emit("messageReactionUpdated", { id, reactions: msg.reactions });
+    } catch (err) {
+      console.error("Socket error on messageReaction", err);
+    }
+  });
+
   socket.on("markAllSeen", ({ userId, otherUserId }) => {
     const senderId = socket.data.user?._id;
     if (!senderId || String(senderId) !== String(userId)) return;

@@ -18,7 +18,12 @@ const messageSchema = new mongoose.Schema({
   isRequest: { type: Boolean, default: false },
   requestStatus: { type: String, enum: ['pending', 'accepted', 'declined'], default: 'accepted' },
   deletedBy: [{ type: String }],
-  isEdited: { type: Boolean, default: false }
+  isEdited: { type: Boolean, default: false },
+  reactions: [{
+    userId: { type: String, required: true },
+    username: { type: String, required: true },
+    emoji: { type: String, required: true }
+  }]
 }, { timestamps: true });
 
 messageSchema.index({ room: 1, createdAt: 1 });

@@ -6,9 +6,17 @@ import { useNavigate } from "react-router-dom";
 import CryptoJS from "crypto-js";
 import { encryptMessage, decryptMessage, decryptMessages } from "../utils/encryption";
 import VerifiedBadge from "./VerifiedBadge";
+import Home from "./Home";
 import "./Chat.css";
 import "./ThemeLight.css";
 import EmojiPicker from 'emoji-picker-react';
+import { 
+  playSendSound, 
+  playReceiveSound, 
+  playNotificationSound, 
+  getSoundPreferences, 
+  setSoundPreference 
+} from "../utils/audio";
 
 const runtimeConfig = window.__APP_CONFIG__ || {};
 const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
@@ -28,6 +36,8 @@ function room(a, b) { return [a, b].sort().join("_"); }
 function isMobileViewport() {
   return window.matchMedia('(max-width: 820px)').matches;
 }
+
+const HOME_BG_KEY = 'home_background_image';
 
 function getStoredUser() {
   try {
@@ -68,7 +78,7 @@ function Chat({ onLogout }) {
     }
 
     if (!user?._id) {
-      nav('/', { replace: true });
+      nav('/auth', { replace: true });
       return;
     }
 
@@ -84,7 +94,7 @@ function Chat({ onLogout }) {
         if (res.data.isBlocked) {
           showToast('Your account is blocked. Please contact support.', 'error');
           socket.disconnect();
-          nav('/', { replace: true });
+          nav('/auth', { replace: true });
           return;
         }
 
@@ -99,7 +109,7 @@ function Chat({ onLogout }) {
           localStorage.removeItem('token');
           syncAuthHeader(null);
           socket.disconnect();
-          nav('/', { replace: true });
+          nav('/auth', { replace: true });
           return;
         }
         console.error('failed to refresh user', err);
@@ -143,9 +153,21 @@ function Chat({ onLogout }) {
     const saved = localStorage.getItem('chat_theme');
     return saved ? saved === 'light' : true;
   });
+  const [isMobileScreen, setIsMobileScreen] = useState(() => isMobileViewport());
   const [showNavMenu, setShowNavMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => isMobileViewport());
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  useEffect(() => {
+    const syncViewport = () => setIsMobileScreen(isMobileViewport());
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    window.addEventListener('orientationchange', syncViewport);
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+      window.removeEventListener('orientationchange', syncViewport);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('chat_theme', isLightMode ? 'light' : 'dark');
@@ -179,6 +201,7 @@ function Chat({ onLogout }) {
   const mediaFileRef = useRef();
   const groupFileRef = useRef();
   const fileRef = useRef();
+  const bgFileInputRef = useRef(null);
 
   // ─── Sidebar tab ──────────────────────────────────────────────────────────
   const [sidebarTab, setSidebarTab] = useState('chats'); // 'chats' | 'requests' | 'discover'
@@ -225,6 +248,102 @@ function Chat({ onLogout }) {
   const [passwordDraft, setPasswordDraft] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [deletePassword, setDeletePassword] = useState('');
   const [accountActionBusy, setAccountActionBusy] = useState(false);
+
+  // ─── Visual Theme & sound synthesizer states ──────────────────────────────
+  const [visualTheme, setVisualTheme] = useState(() => localStorage.getItem('chat_visual_theme') || 'aurora');
+  const [soundPrefs, setSoundPrefs] = useState(() => getSoundPreferences());
+
+  const toggleSound = (key) => {
+    const nextVal = !soundPrefs[key];
+    const fullKey = key === 'all' ? 'sound_enabled_all' : key === 'send' ? 'sound_enabled_send' : key === 'receive' ? 'sound_enabled_receive' : 'sound_enabled_notification';
+    setSoundPreference(fullKey, nextVal);
+    setSoundPrefs(getSoundPreferences());
+  };
+
+  // ─── Chat Background & Custom Wallpaper States ────────────────────────────
+  const [chatBgType, setChatBgType] = useState(() => localStorage.getItem('chat_bg_type') || 'default');
+  const [chatBgValue, setChatBgValue] = useState(() => localStorage.getItem('chat_bg_value') || '');
+  const [chatBgOpacity, setChatBgOpacity] = useState(() => {
+    const val = localStorage.getItem('chat_bg_opacity');
+    return val ? parseFloat(val) : 0.8;
+  });
+  const [chatBgBlur, setChatBgBlur] = useState(() => {
+    const val = localStorage.getItem('chat_bg_blur');
+    return val ? parseInt(val) : 0;
+  });
+
+  const saveChatBg = (type, value, opacity = chatBgOpacity, blur = chatBgBlur) => {
+    setChatBgType(type);
+    setChatBgValue(value);
+    setChatBgOpacity(opacity);
+    setChatBgBlur(blur);
+    localStorage.setItem('chat_bg_type', type);
+    localStorage.setItem('chat_bg_value', value);
+    localStorage.setItem('chat_bg_opacity', String(opacity));
+    localStorage.setItem('chat_bg_blur', String(blur));
+  };
+
+  const handleCustomBgUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1200;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        saveChatBg('image', compressedDataUrl);
+        showToast('Custom wallpaper uploaded successfully!', 'success');
+      };
+      img.src = String(e.target?.result || '');
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const resetChatBg = () => {
+    setChatBgType('default');
+    setChatBgValue('');
+    setChatBgOpacity(0.8);
+    setChatBgBlur(0);
+    localStorage.removeItem('chat_bg_type');
+    localStorage.removeItem('chat_bg_value');
+    localStorage.removeItem('chat_bg_opacity');
+    localStorage.removeItem('chat_bg_blur');
+    showToast('Background reset to default!', 'success');
+  };
+
+  const toggleReaction = (msgId, emoji) => {
+    if (!msgId || !emoji) return;
+    if (isAccountBlocked) {
+      showToast('Your account is blocked', 'error');
+      return;
+    }
+    socket.emit("messageReaction", {
+      id: msgId,
+      emoji,
+      userId: user._id,
+      username: localUser.displayName || localUser.username || user.username || 'user'
+    });
+  };
 
   // ─── Toast notification ───────────────────────────────────────────────────
   const [toast, setToast] = useState(null);
@@ -478,6 +597,7 @@ function Chat({ onLogout }) {
 
     // ─── Real-time chat request notifications ─────────────────────────────
     socket.on("chatRequestReceived", ({ from }) => {
+      playNotificationSound();
       showToast(`📨 ${from.username} sent you a chat request!`, 'request');
       showBrowserNotification('New Chat Request', { body: `${from.username} sent you a chat request!`, icon: from.avatar });
       // Add to requests list if not already there
@@ -496,6 +616,7 @@ function Chat({ onLogout }) {
     });
 
     socket.on("messageRequestReceived", ({ from, message }) => {
+      playNotificationSound();
       showToast(`📩 Message request from ${from.username}`, 'request');
       showBrowserNotification('Message Request', { body: `New message request from ${from.username}`, icon: from.avatar });
       setMessageRequests(prev => {
@@ -516,6 +637,7 @@ function Chat({ onLogout }) {
     });
 
     socket.on("chatAccepted", ({ by }) => {
+      playNotificationSound();
       showToast(`✅ ${by.username} accepted your chat request!`, 'success');
       // Reload local user so acceptedChats is up-to-date
       axios.get(`${API_BASE}/api/users/${localUser._id}`)
@@ -620,6 +742,9 @@ function Chat({ onLogout }) {
         if (idx !== -1) { const next = [...prev]; next[idx] = decryptedData; return next; }
         return [...prev, decryptedData];
       });
+      if (data.from !== user._id) {
+        playReceiveSound();
+      }
       if (data.isGroup) {
         if (data.to !== currentSelected?._id && data.from !== user._id) {
           setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
@@ -641,6 +766,9 @@ function Chat({ onLogout }) {
 
     const backgroundHandler = (data) => {
       const currentSelected = selectedRef.current;
+      if (data.from !== user._id) {
+        playReceiveSound();
+      }
       if (data.isGroup) {
         if (data.to !== currentSelected?._id && data.from !== user._id) {
           setUnreadCounts(prev => ({ ...prev, [data.to]: (prev[data.to] || 0) + 1 }));
@@ -664,6 +792,9 @@ function Chat({ onLogout }) {
     const clearedHandler = ({ type, userId }) => {
       if (type === 'everyone' || userId === user._id) setMessages([]);
     };
+    const reactionHandler = ({ id, reactions }) => {
+      setMessages(prev => prev.map(m => m._id === id ? { ...m, reactions } : m));
+    };
 
     socket.on("receiveMessage", handler);
     socket.on("backgroundMessage", backgroundHandler);
@@ -672,6 +803,7 @@ function Chat({ onLogout }) {
     socket.on("messageEdited", editedHandler);
     socket.on("messageDeleted", deletedHandler);
     socket.on("chatCleared", clearedHandler);
+    socket.on("messageReactionUpdated", reactionHandler);
 
     return () => {
       socket.off("receiveMessage", handler);
@@ -681,6 +813,7 @@ function Chat({ onLogout }) {
       socket.off("messageEdited", editedHandler);
       socket.off("messageDeleted", deletedHandler);
       socket.off("chatCleared", clearedHandler);
+      socket.off("messageReactionUpdated", reactionHandler);
     };
   }, [user._id]);
 
@@ -697,6 +830,7 @@ function Chat({ onLogout }) {
         { ...(window.history.state || {}), instaChatView: 'chat', chatId: u._id },
         ''
       );
+      setSidebarCollapsed(true);
     }
 
     setSelected(u);
@@ -1102,7 +1236,7 @@ function Chat({ onLogout }) {
     if (onLogout) {
       onLogout();
     }
-    nav('/', { replace: true });
+    nav('/auth', { replace: true });
   };
 
   const deleteAccount = async () => {
@@ -1179,6 +1313,7 @@ function Chat({ onLogout }) {
       createdAt: new Date().toISOString(),
     };
 
+    playSendSound();
     setMessages(prev => [...prev, optimisticMsg]);
     socket.emit('sendMessage', payload);
     setShowForwardModal(false);
@@ -1223,6 +1358,7 @@ function Chat({ onLogout }) {
     const optimisticMsg = { ...payload, message: msg, room: selected.isGroup ? selected._id : room(user._id, selected._id), seen: false, createdAt: new Date().toISOString() };
     if (replyingTo) optimisticMsg.replyTo = replyingTo;
     
+    playSendSound();
     setMessages(prev => [...prev, optimisticMsg]);
     socket.emit("sendMessage", payload);
     setMsg(""); setSelectedMedia(null); setReplyingTo(null);
@@ -1580,9 +1716,12 @@ function Chat({ onLogout }) {
     }
   };
 
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className={`chat-root ${isLightMode ? 'light light-theme' : 'dark'}`}>
+    <div className={`chat-root theme-${visualTheme} ${isLightMode ? 'light light-theme' : 'dark'} ${isMobileScreen && selected ? 'mobile-chat-open' : ''}`}>
+      <div className="bg-ambient-glow">
+        <div className="bg-glow-blob-1"></div>
+        <div className="bg-glow-blob-2"></div>
+      </div>
       {/* Toast */}
       {toast && (
         <div className={`toast toast-${toast.type}`}>{toast.msg}</div>
@@ -1617,7 +1756,11 @@ function Chat({ onLogout }) {
             <span className="logo-text text-headline-sm font-headline-sm font-bold text-primary truncate">Nexus Chat</span>
           </div>
           <div className="flex-1 space-y-1">
-            <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'chats' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('chats'); setDiscoverSearch(''); if (isMobileViewport()) setSidebarCollapsed(true); }}>
+            <a className={`nav-item flex items-center gap-4 ${(selected === null && sidebarTab === 'chats') ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('chats'); setSelected(null); if (isMobileViewport()) setSidebarCollapsed(true); }}>
+                <span className="material-symbols-outlined shrink-0" data-icon="home">home</span>
+                <span className="nav-text text-label-md font-label-md truncate">Home</span>
+            </a>
+            <a className={`nav-item flex items-center gap-4 ${(selected !== null && sidebarTab === 'chats') ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('chats'); setDiscoverSearch(''); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="chat" style={sidebarTab === 'chats' ? { fontVariationSettings: '"FILL" 1' } : {}}>chat</span>
                 <span className="nav-text text-label-md font-label-md truncate">Chats</span>
             </a>
@@ -1704,6 +1847,19 @@ function Chat({ onLogout }) {
 
           {/* Chat Window Column */}
           <section className={`flex-1 flex-col bg-surface overflow-hidden relative ${selected ? 'flex' : 'hidden md:flex'}`}>
+            {/* Custom Dynamic Wallpaper Layer */}
+            <div 
+              className="absolute inset-0 z-0 transition-all duration-300 pointer-events-none chat-wallpaper-overlay"
+              style={{
+                ...((chatBgType === 'default') ? { background: 'var(--chat-bg)' } :
+                    (chatBgType === 'color') ? { backgroundColor: chatBgValue } :
+                    (chatBgType === 'gradient') ? { backgroundImage: chatBgValue } :
+                    (chatBgType === 'image') ? { backgroundImage: `url(${chatBgValue})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' } : {}),
+                opacity: chatBgOpacity,
+                filter: chatBgBlur > 0 ? `blur(${chatBgBlur}px)` : 'none',
+                transform: chatBgBlur > 0 ? 'scale(1.05)' : 'none',
+              }}
+            />
             {selected ? (
               <>
                 {/* TopNavBar Component */}
@@ -1799,6 +1955,21 @@ function Chat({ onLogout }) {
                               </div>
                             )}
                             <div className={`flex items-end gap-2 ${isMe ? 'justify-end flex-row-reverse' : ''} relative group/msg`}>
+                              {/* Floating Glass Reactions Bar */}
+                              {m._id && (
+                                <div className="reaction-popover">
+                                  {['👍', '❤️', '😂', '😮', '😢', '🔥'].map(emoji => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      className="reaction-emoji-btn"
+                                      onClick={() => toggleReaction(m._id, emoji)}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                               {!isMe && (
                                 <div className="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center text-sm font-bold shrink-0 overflow-hidden cursor-pointer" onClick={() => openUserProfile(m.from)}>
                                   {m.from?.avatar ? <img src={m.from.avatar} alt="u" className="w-full h-full object-cover" /> : (m.from?.username || 'U').slice(0, 1).toUpperCase()}
@@ -1838,6 +2009,36 @@ function Chat({ onLogout }) {
                                   
                                   {m.message && <p className="text-body-md font-body-md whitespace-pre-wrap break-words">{m.message}</p>}
                                 </div>
+
+                                {/* Render grouped reactions badge stack */}
+                                {m.reactions && m.reactions.length > 0 && (() => {
+                                  const grouped = {};
+                                  m.reactions.forEach(r => {
+                                    if (!grouped[r.emoji]) grouped[r.emoji] = [];
+                                    grouped[r.emoji].push(r);
+                                  });
+                                  return (
+                                    <div className="message-reactions-container">
+                                      {Object.keys(grouped).map(emoji => {
+                                        const list = grouped[emoji];
+                                        const hasMyReaction = list.some(r => String(r.userId) === String(user._id));
+                                        const titleText = list.map(r => r.username).join(', ');
+                                        return (
+                                          <button
+                                            key={emoji}
+                                            type="button"
+                                            title={titleText}
+                                            className={`message-reaction-badge ${hasMyReaction ? 'my-reaction' : ''}`}
+                                            onClick={() => toggleReaction(m._id, emoji)}
+                                          >
+                                            <span>{emoji}</span>
+                                            <span>{list.length}</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })()}
                               </div>
 
                               <span className="text-[10px] font-label-sm text-on-surface-variant mb-1 shrink-0 px-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
@@ -1872,20 +2073,20 @@ function Chat({ onLogout }) {
                   )}
                   
                   {typingUser === selected._id && (
-                    <div className="flex items-center gap-2 text-on-surface-variant text-sm italic animation-slide-up-fade">
-                      <div className="flex gap-1">
-                        <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce"></span>
-                        <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></span>
-                        <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+                    <div className="typing-dots-bubble animation-slide-up-fade">
+                      <div className="flex gap-1 mr-2">
+                        <span className="w-2 h-2 bg-primary/70 rounded-full animate-bounce"></span>
+                        <span className="w-2 h-2 bg-primary/70 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></span>
+                        <span className="w-2 h-2 bg-primary/70 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></span>
                       </div>
-                      {selected.username || 'User'} is typing...
+                      <span className="text-on-surface-variant text-label-sm font-label-sm">{selected.username || 'User'} is typing...</span>
                     </div>
                   )}
                   <div ref={messagesEndRef} />
                 </div>
 
                 {/* Input Field */}
-                <footer className="p-4 lg:p-6 bg-surface-container-lowest border-t border-outline-variant shrink-0">
+                <footer className="p-4 lg:p-6 bg-surface-container-lowest/80 backdrop-blur-xl border-t border-outline-variant shrink-0 relative z-10">
                   {replyingTo && (
                     <div className="flex items-center justify-between bg-surface-variant p-2 px-4 rounded-xl mb-3 text-sm">
                       <div className="truncate">
@@ -1954,16 +2155,37 @@ function Chat({ onLogout }) {
                 </footer>
               </>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-surface">
-                <div className="w-24 h-24 bg-primary-container rounded-3xl flex items-center justify-center mb-6 shadow-lg shadow-primary/20 animate-slide-up-fade">
-                  <span className="material-symbols-outlined text-[48px] text-on-primary" style={{ fontVariationSettings: '"FILL" 1' }}>bolt</span>
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 relative z-10 select-none bg-transparent">
+                {/* A beautiful glassmorphic container with entry animations */}
+                <div className="max-w-xl w-full p-10 lg:p-14 rounded-3xl bg-surface-container-low/40 backdrop-blur-xl border border-outline-variant/30 shadow-2xl flex flex-col items-center justify-center transition-all duration-500 animate-slide-up-fade" style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.05)' }}>
+                  
+                  {/* Animated floating logo/icon wrapper */}
+                  <div className="relative mb-8 group">
+                    <div className="absolute inset-0 bg-primary/20 rounded-3xl blur-xl group-hover:bg-primary/30 transition-all duration-500 animate-pulse"></div>
+                    <div className="w-24 h-24 bg-gradient-to-tr from-primary to-accent rounded-3xl flex items-center justify-center relative z-10 shadow-lg border border-white/10 transform hover:scale-105 transition-transform duration-300">
+                      <span className="material-symbols-outlined text-[48px] text-white animate-bounce" style={{ fontVariationSettings: '"FILL" 1', animationDuration: '3s' }}>bolt</span>
+                    </div>
+                  </div>
+                  
+                  {/* Large Typography Title */}
+                  <h2 className="text-headline-lg font-headline-lg text-on-surface mb-3 tracking-tight font-extrabold" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.3)' }}>
+                    Welcome, {displayName}!
+                  </h2>
+                  
+                  {/* Professional Subtitle with refined spacing */}
+                  <p className="text-body-lg font-body-lg text-on-surface-variant max-w-md leading-relaxed">
+                    {acceptedUserList.length === 0
+                      ? 'Connect with friends to start chatting. Search and discover profiles in the Explore tab!'
+                      : 'Select a conversation from the left sidebar to start messaging instantly.'}
+                  </p>
+                  
+                  {/* Small brand or aesthetic footer note */}
+                  <div className="mt-8 pt-6 border-t border-outline-variant/20 w-full flex items-center justify-center gap-2 text-label-sm font-label-sm text-on-surface-variant/50">
+                    <span className="material-symbols-outlined text-[16px] text-primary" style={{ fontVariationSettings: '"FILL" 1' }}>security</span>
+                    <span>End-to-End Encrypted</span>
+                  </div>
+                  
                 </div>
-                <h2 className="text-headline-lg font-headline-lg text-on-surface mb-2 animate-slide-up-fade" style={{ animationDelay: '0.1s' }}>Welcome, {displayName}!</h2>
-                <p className="text-body-lg font-body-lg text-on-surface-variant max-w-md animate-slide-up-fade" style={{ animationDelay: '0.2s' }}>
-                  {acceptedUserList.length === 0
-                    ? 'Head to Explore to find and connect with people.'
-                    : 'Select a chat from the sidebar to start messaging.'}
-                </p>
               </div>
             )}
           </section>
@@ -2376,6 +2598,227 @@ function Chat({ onLogout }) {
                   <button className="modal-btn submit" onClick={updatePassword} disabled={accountActionBusy} style={{ width: '100%', marginTop: '10px' }}>
                     {accountActionBusy ? 'Updating...' : 'Update Password'}
                   </button>
+
+                  {/* Dynamic Custom Themes Selector Section */}
+                  <div className="account-settings-title" style={{ marginTop: '24px' }}>Custom Dynamic Theme</div>
+                  <div className="theme-selector-grid">
+                    {[
+                      { id: 'aurora', name: 'Midnight Aurora', class: 'aurora' },
+                      { id: 'cyberpunk', name: 'Cyberpunk Neon', class: 'cyberpunk' },
+                      { id: 'forest', name: 'Emerald Forest', class: 'forest' },
+                      { id: 'sunset', name: 'Sunset Gold', class: 'sunset' }
+                    ].map(t => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`theme-selector-btn ${visualTheme === t.id ? 'active' : ''}`}
+                        onClick={() => {
+                          setVisualTheme(t.id);
+                          localStorage.setItem('chat_visual_theme', t.id);
+                          showToast(`Theme switched to ${t.name}!`, 'success');
+                        }}
+                      >
+                        <div className={`theme-dot ${t.class}`}></div>
+                        <span>{t.name}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Modern Background Customization Section */}
+                  <div className="account-settings-title" style={{ marginTop: '24px' }}>Chat Wallpaper / Background</div>
+                  <div className="bg-customizer-panel" style={{ marginTop: '12px' }}>
+                    
+                    {/* Live Preview Card */}
+                    <div className="bg-preview-card mb-4 relative overflow-hidden rounded-2xl h-24 border border-outline-variant/30 flex items-center justify-center">
+                      {/* Background element */}
+                      <div 
+                        className="absolute inset-0 transition-all duration-300"
+                        style={{
+                          ...((chatBgType === 'default') ? { background: 'var(--chat-bg)' } :
+                              (chatBgType === 'color') ? { backgroundColor: chatBgValue } :
+                              (chatBgType === 'gradient') ? { backgroundImage: chatBgValue } :
+                              (chatBgType === 'image') ? { backgroundImage: `url(${chatBgValue})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' } : {}),
+                          opacity: chatBgOpacity,
+                          filter: chatBgBlur > 0 ? `blur(${chatBgBlur}px)` : 'none',
+                          transform: chatBgBlur > 0 ? 'scale(1.05)' : 'none',
+                        }}
+                      />
+                      {/* Floating mockup messages to show readability preview */}
+                      <div className="relative z-10 w-full px-4 flex flex-col gap-1 pointer-events-none">
+                        <div className="bg-surface-container-high/60 backdrop-blur-md text-[10px] text-on-surface px-2.5 py-1 rounded-lg max-w-[60%] self-start border border-white/5 truncate">
+                          Hey! Dynamic wallpaper check.
+                        </div>
+                        <div className="bg-primary/80 backdrop-blur-md text-[10px] text-white px-2.5 py-1 rounded-lg max-w-[60%] self-end border border-white/5 truncate">
+                          Wow, this preview is slick! 🚀
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Gradient presets */}
+                    <div className="profile-field" style={{ marginBottom: '12px' }}>
+                      <label className="profile-label" style={{ marginBottom: '6px' }}>Preset Gradients</label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { name: 'Aurora', value: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%)' },
+                          { name: 'Sunset', value: 'linear-gradient(135deg, #2e0817 0%, #12030f 50%, #03001e 100%)' },
+                          { name: 'Ocean', value: 'linear-gradient(135deg, #021b19 0%, #050b14 100%)' },
+                          { name: 'Cyber', value: 'linear-gradient(135deg, #11001c 0%, #240046 50%, #3c096c 100%)' }
+                        ].map(g => (
+                          <button
+                            key={g.name}
+                            type="button"
+                            className={`bg-preset-btn rounded-xl px-3 py-1.5 text-label-sm font-label-sm border border-outline-variant/30 hover:bg-surface-container-high transition-colors ${chatBgType === 'gradient' && chatBgValue === g.value ? 'ring-2 ring-primary border-primary' : ''}`}
+                            style={{ background: g.value, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.5)', cursor: 'pointer' }}
+                            onClick={() => saveChatBg('gradient', g.value)}
+                          >
+                            {g.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Color presets & Picker */}
+                    <div className="profile-field" style={{ marginBottom: '12px' }}>
+                      <label className="profile-label" style={{ marginBottom: '6px' }}>Preset Colors & Custom Color</label>
+                      <div className="flex flex-wrap items-center gap-3">
+                        {[
+                          '#121214', // Charcoal
+                          '#0a0f1d', // Navy
+                          '#061c15', // Emerald
+                          '#170b22', // Plum
+                          '#1c0d02'  // Cocoa
+                        ].map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            className={`w-8 h-8 rounded-full border border-outline-variant/30 transition-all cursor-pointer ${chatBgType === 'color' && chatBgValue === c ? 'scale-110 ring-2 ring-primary ring-offset-2' : 'hover:scale-105'}`}
+                            style={{ backgroundColor: c }}
+                            onClick={() => saveChatBg('color', c)}
+                          />
+                        ))}
+                        
+                        {/* Color Picker Button wrapper */}
+                        <div className="relative w-8 h-8 rounded-full border border-outline-variant/30 overflow-hidden flex items-center justify-center bg-surface-container-high hover:scale-105 transition-transform cursor-pointer">
+                          <span className="material-symbols-outlined text-[16px] text-on-surface-variant pointer-events-none">palette</span>
+                          <input
+                            type="color"
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                            value={chatBgType === 'color' ? chatBgValue : '#121214'}
+                            onChange={(e) => saveChatBg('color', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Custom Image Upload & Reset */}
+                    <div className="flex gap-3" style={{ marginBottom: '16px' }}>
+                      <button
+                        type="button"
+                        className="btn-interact flex-1 bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant/30 text-on-surface text-label-md font-label-md py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                        onClick={() => bgFileInputRef.current?.click()}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">upload_file</span>
+                        <span>Upload Image</span>
+                      </button>
+                      <input
+                        ref={bgFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={handleCustomBgUpload}
+                      />
+                      
+                      <button
+                        type="button"
+                        className="btn-interact bg-error-container/20 hover:bg-error-container/30 border border-error/20 text-error text-label-md font-label-md px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                        onClick={resetChatBg}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                        <span>Reset</span>
+                      </button>
+                    </div>
+
+                    {/* Sliders */}
+                    <div className="space-y-3" style={{ marginBottom: '20px' }}>
+                      <div>
+                        <div className="flex justify-between text-label-sm font-label-sm text-on-surface-variant mb-1">
+                          <span>Wallpaper Opacity</span>
+                          <span>{Math.round(chatBgOpacity * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="1.0"
+                          step="0.05"
+                          className="w-full h-1.5 bg-surface-container rounded-lg appearance-none cursor-pointer accent-primary"
+                          value={chatBgOpacity}
+                          onChange={(e) => saveChatBg(chatBgType, chatBgValue, parseFloat(e.target.value), chatBgBlur)}
+                        />
+                      </div>
+                      
+                      <div>
+                        <div className="flex justify-between text-label-sm font-label-sm text-on-surface-variant mb-1">
+                          <span>Wallpaper Blur</span>
+                          <span>{chatBgBlur}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="20"
+                          step="1"
+                          className="w-full h-1.5 bg-surface-container rounded-lg appearance-none cursor-pointer accent-primary"
+                          value={chatBgBlur}
+                          onChange={(e) => saveChatBg(chatBgType, chatBgValue, chatBgOpacity, parseInt(e.target.value))}
+                        />
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Programmatic Sound Effects Section */}
+                  <div className="account-settings-title" style={{ marginTop: '24px' }}>Sound Effects (UI Chimes)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div className="sound-toggle-row">
+                      <span className="sound-toggle-label">Master Sound Toggle</span>
+                      <input 
+                        type="checkbox" 
+                        checked={soundPrefs.all} 
+                        onChange={() => toggleSound('all')}
+                        style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                      />
+                    </div>
+                    {soundPrefs.all && (
+                      <>
+                        <div className="sound-toggle-row">
+                          <span className="sound-toggle-label" style={{ paddingLeft: '12px', fontSize: '12px', opacity: 0.85 }}>Sent Messages Sound (Swoosh)</span>
+                          <input 
+                            type="checkbox" 
+                            checked={soundPrefs.send} 
+                            onChange={() => toggleSound('send')}
+                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                          />
+                        </div>
+                        <div className="sound-toggle-row">
+                          <span className="sound-toggle-label" style={{ paddingLeft: '12px', fontSize: '12px', opacity: 0.85 }}>Received Messages Sound (Pop)</span>
+                          <input 
+                            type="checkbox" 
+                            checked={soundPrefs.receive} 
+                            onChange={() => toggleSound('receive')}
+                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                          />
+                        </div>
+                        <div className="sound-toggle-row">
+                          <span className="sound-toggle-label" style={{ paddingLeft: '12px', fontSize: '12px', opacity: 0.85 }}>Requests & Badges Chime (Harmonized)</span>
+                          <input 
+                            type="checkbox" 
+                            checked={soundPrefs.notification} 
+                            onChange={() => toggleSound('notification')}
+                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
 
                   <div className="delete-account-box">
                     <div className="delete-account-title">Password Recovery</div>

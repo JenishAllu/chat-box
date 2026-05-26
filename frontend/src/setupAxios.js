@@ -20,9 +20,11 @@ export default function setupAxios() {
           localStorage.removeItem('user');
         } catch (e) {}
         delete axios.defaults.headers.common.Authorization;
-        // force navigate to login
+        // Replace the current entry so the browser back button does not jump to
+        // the previous external page (for example, Google sign-in pages).
         if (typeof window !== 'undefined') {
-          window.location.href = '/';
+          const baseUrl = `${window.location.origin}${window.location.pathname}${window.location.pathname.endsWith('/') ? '' : '/'}`;
+          window.location.replace(`${baseUrl}#/`);
         }
       }
       return Promise.reject(err);

@@ -160,6 +160,50 @@ body.light-theme-body {
   color: var(--text-main) !important;
 }
 
+.light-theme .account-settings-panel {
+  background: #f8fafc !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+.light-theme .account-settings-title {
+  color: var(--text-main) !important;
+}
+
+.light-theme .profile-label {
+  color: var(--accent) !important;
+}
+
+.light-theme .profile-input {
+  background: #f1f5f9 !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.light-theme .profile-input::placeholder {
+  color: #94a3b8 !important;
+}
+
+.light-theme .delete-account-box {
+  border-top: 1px solid var(--border-color) !important;
+}
+
+.light-theme .delete-account-title {
+  color: #b91c1c !important;
+}
+
+.light-theme .delete-account-copy {
+  color: #475569 !important;
+}
+
+.light-theme .modal-btn.cancel.delete-account-btn {
+  color: #b91c1c !important;
+  border-color: rgba(185, 28, 28, 0.35) !important;
+}
+
+.light-theme .modal-btn.submit {
+  color: #ffffff !important;
+}
+
 .light-theme .profile-display-name,
 .light-theme .profile-stat-num {
   color: var(--text-main) !important;

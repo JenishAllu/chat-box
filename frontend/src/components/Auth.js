@@ -30,6 +30,11 @@ function getResetTokenFromLocation(location) {
   return '';
 }
 
+function getGoogleButtonWidth() {
+  if (typeof window === 'undefined') return 260;
+  return Math.max(220, Math.min(360, window.innerWidth - 48));
+}
+
 function Auth({ onAuthSuccess }) {
   const location = useLocation();
   const nav = useNavigate();
@@ -162,7 +167,7 @@ function Auth({ onAuthSuccess }) {
       window.google.accounts.id.renderButton(googleButtonRef.current, {
         theme: 'outline',
         size: 'large',
-        width: 260,
+        width: getGoogleButtonWidth(),
         text: 'continue_with',
         shape: 'rectangular',
       });
@@ -198,7 +203,7 @@ function Auth({ onAuthSuccess }) {
       window.google.accounts.id.renderButton(googleButtonRef.current, {
         theme: 'outline',
         size: 'large',
-        width: 260,
+        width: getGoogleButtonWidth(),
         text: 'continue_with',
         shape: 'rectangular',
       });
@@ -236,7 +241,7 @@ function Auth({ onAuthSuccess }) {
     setError('');
     setSuccess('');
     setMode('login');
-    nav('/', { replace: true });
+    nav('/auth', { replace: true });
   };
 
   const submit = async (e) => {
@@ -349,7 +354,7 @@ function Auth({ onAuthSuccess }) {
         setResetOtp('');
         setResetRecoveryEmail('');
         setRecoveryMethod('link');
-        nav('/', { replace: true });
+        nav('/auth', { replace: true });
         setMode('login');
         return;
       }
@@ -425,7 +430,7 @@ function Auth({ onAuthSuccess }) {
         } catch {}
         syncAuthHeader(null);
         setMode('login');
-        nav('/', { replace: true });
+        nav('/auth', { replace: true });
         setError(response.msg || 'Account not found');
       } else if (response.pendingVerification) {
         setPendingEmail(response.email || form.email.trim());
