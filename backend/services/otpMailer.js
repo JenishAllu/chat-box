@@ -1,10 +1,6 @@
 const nodemailer = require('nodemailer');
 const https = require('https');
 
-// Secure SMTPS Gmail Fallback Credentials (for local/backup use)
-const FALLBACK_USER = 'projevolve4450@gmail.com';
-const FALLBACK_PASS = 'cmvsmzhidmfhnulu';
-
 function pickEnv(...keys) {
   for (const key of keys) {
     const value = process.env[key];
@@ -61,35 +57,13 @@ function sendEmailViaBrevoApi({ to, subject, text, html, apiKey, fromEmail }) {
   });
 }
 
-function getFallbackTransporter() {
-  try {
-    return nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: { user: FALLBACK_USER, pass: FALLBACK_PASS },
-      pool: true,
-      connectionTimeout: 10000,
-      socketTimeout: 10000,
-      greetingTimeout: 10000,
-      tls: {
-        rejectUnauthorized: false,
-        minVersion: 'TLSv1.2'
-      }
-    });
-  } catch (err) {
-    console.error('[SMTP] Failed to initialize Gmail fallback transporter:', err);
-    return null;
-  }
-}
-
 function getTransporter() {
   let host = pickEnv('SMTP_HOST', 'EMAIL_HOST', 'MAIL_HOST');
   const service = pickEnv('SMTP_SERVICE', 'EMAIL_SERVICE', 'MAIL_SERVICE');
   let port = Number(pickEnv('SMTP_PORT', 'EMAIL_PORT', 'MAIL_PORT') || 587);
   let secureEnv = pickEnv('SMTP_SECURE', 'EMAIL_SECURE', 'MAIL_SECURE');
   
-  // Smart override for Gmail locally: force direct Port 465 SMTPS
+  // Smart override for Gmail locally/cloud: force direct Port 465 SMTPS
   let activeService = service;
   if (service && String(service).toLowerCase() === 'gmail') {
     host = 'smtp.gmail.com';
@@ -175,7 +149,7 @@ async function sendVerificationOtpEmail({ to, otp }) {
   const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
   const pass = String(passRaw).replace(/\s+/g, '');
 
-  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY)
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY & SECURE)
   if (pass.startsWith('xsmtpsib')) {
     console.log('[OTP] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
     try {
@@ -194,7 +168,7 @@ async function sendVerificationOtpEmail({ to, otp }) {
     }
   }
 
-  // 2. PRIMARY SMTP
+  // 2. PRIMARY SMTP (GMAIL OVER PORT 465 OR CUSTOM SMTP RELAY)
   const transporter = requireTransporter('Verification OTP');
   let primaryFailed = false;
   if (transporter) {
@@ -202,28 +176,15 @@ async function sendVerificationOtpEmail({ to, otp }) {
       await transporter.sendMail(message);
       return { preview: false };
     } catch (err) {
-      console.warn('[OTP] Primary SMTP failed. Trying SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      console.warn('[OTP] SMTP delivery failed:', err && err.message ? err.message : err);
       primaryFailed = true;
     }
   }
 
-  // 3. SMTPS GMAIL FALLBACK
-  const fallbackTransporter = getFallbackTransporter();
-  if (fallbackTransporter) {
-    try {
-      const fallbackMessage = { ...message, from: FALLBACK_USER };
-      await fallbackTransporter.sendMail(fallbackMessage);
-      console.log('[OTP] Email sent successfully using SMTPS Gmail fallback!');
-      return { preview: false, fallbackUsed: true };
-    } catch (fallbackErr) {
-      console.error('[OTP] Gmail fallback also failed:', fallbackErr);
-    }
-  }
-
-  // 4. PREVIEW SANDBOX
+  // 3. PREVIEW SANDBOX
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (allowPreviewOnly || primaryFailed) {
-    console.warn('[OTP] All delivery methods failed. Falling back to console preview.');
+    console.warn('[OTP] Falling back to console preview.');
     console.log(`[OTP] Verification code for ${to}: ${otp}`);
     return { preview: true, fallback: true };
   }
@@ -247,7 +208,7 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
   const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
   const pass = String(passRaw).replace(/\s+/g, '');
 
-  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY)
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY & SECURE)
   if (pass.startsWith('xsmtpsib')) {
     console.log('[RESET] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
     try {
@@ -274,28 +235,15 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
       await transporter.sendMail(message);
       return { preview: false };
     } catch (err) {
-      console.warn('[RESET] Primary SMTP failed. Trying SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      console.warn('[RESET] SMTP delivery failed:', err && err.message ? err.message : err);
       primaryFailed = true;
     }
   }
 
-  // 3. SMTPS GMAIL FALLBACK
-  const fallbackTransporter = getFallbackTransporter();
-  if (fallbackTransporter) {
-    try {
-      const fallbackMessage = { ...message, from: FALLBACK_USER };
-      await fallbackTransporter.sendMail(fallbackMessage);
-      console.log('[RESET] Email sent successfully using SMTPS Gmail fallback!');
-      return { preview: false, fallbackUsed: true };
-    } catch (fallbackErr) {
-      console.error('[RESET] Gmail fallback also failed:', fallbackErr);
-    }
-  }
-
-  // 4. PREVIEW SANDBOX
+  // 3. PREVIEW SANDBOX
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (allowPreviewOnly || primaryFailed) {
-    console.warn('[RESET] All delivery methods failed. Falling back to console preview.');
+    console.warn('[RESET] Falling back to console preview.');
     console.log(`[RESET] Password reset link for ${to}: ${resetUrl}`);
     return { preview: true, fallback: true };
   }
@@ -319,7 +267,7 @@ async function sendPasswordResetOtpEmail({ to, otp }) {
   const passRaw = pickEnv('SMTP_PASS', 'EMAIL_PASS', 'MAIL_PASS') || '';
   const pass = String(passRaw).replace(/\s+/g, '');
 
-  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY)
+  // 1. DYNAMIC HTTPS WEB API BYPASS FOR BREVO (RENDER-FRIENDLY & SECURE)
   if (pass.startsWith('xsmtpsib')) {
     console.log('[RESET-OTP] Brevo API Key detected. Bypassing SMTP and using secure HTTPS Web API...');
     try {
@@ -346,28 +294,15 @@ async function sendPasswordResetOtpEmail({ to, otp }) {
       await transporter.sendMail(message);
       return { preview: false };
     } catch (err) {
-      console.warn('[RESET-OTP] Primary SMTP failed. Trying SMTPS Gmail fallback...', err && err.message ? err.message : err);
+      console.warn('[RESET-OTP] SMTP delivery failed:', err && err.message ? err.message : err);
       primaryFailed = true;
     }
   }
 
-  // 3. SMTPS GMAIL FALLBACK
-  const fallbackTransporter = getFallbackTransporter();
-  if (fallbackTransporter) {
-    try {
-      const fallbackMessage = { ...message, from: FALLBACK_USER };
-      await fallbackTransporter.sendMail(fallbackMessage);
-      console.log('[RESET-OTP] Email sent successfully using SMTPS Gmail fallback!');
-      return { preview: false, fallbackUsed: true };
-    } catch (fallbackErr) {
-      console.error('[RESET-OTP] Gmail fallback also failed:', fallbackErr);
-    }
-  }
-
-  // 4. PREVIEW SANDBOX
+  // 3. PREVIEW SANDBOX
   const allowPreviewOnly = String(process.env.OTP_PREVIEW_ONLY || '').toLowerCase() === 'true';
   if (allowPreviewOnly || primaryFailed) {
-    console.warn('[RESET-OTP] All delivery methods failed. Falling back to console preview.');
+    console.warn('[RESET-OTP] Falling back to console preview.');
     console.log(`[RESET-OTP] Password reset OTP for ${to}: ${otp}`);
     return { preview: true, fallback: true };
   }

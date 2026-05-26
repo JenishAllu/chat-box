@@ -1,0 +1,9 @@
+{
+  "name": "chat-box-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm install --prefix backend",
+    "start": "npm start --prefix backend"
+  }
+}
