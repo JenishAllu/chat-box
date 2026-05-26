@@ -10,8 +10,9 @@ import "./Chat.css";
 import "./ThemeLight.css";
 import EmojiPicker from 'emoji-picker-react';
 
-const API_BASE = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || API_BASE;
+const runtimeConfig = window.__APP_CONFIG__ || {};
+const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
+const SOCKET_URL = runtimeConfig.REACT_APP_SOCKET_URL || process.env.REACT_APP_SOCKET_URL || API_BASE;
 
 // ─── End-to-End Encryption Setup ──────────────────────────────────────────
 // Shared encryption key for all users - ensures both sender and receiver can decrypt

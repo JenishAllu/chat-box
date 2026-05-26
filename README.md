@@ -195,15 +195,42 @@ Frontend now uses:
 
 - REACT_APP_API_URL
 - REACT_APP_SOCKET_URL
+- REACT_APP_GOOGLE_CLIENT_ID
 
 Fallback behavior:
 
 - Uses current host with port 5000 when env vars are not provided.
 
+Hosted deployment behavior:
+
+- The frontend reads a runtime config file served by the Node process, so Render and AWS can inject URLs without rebuilding the browser bundle.
+- The backend accepts `CLIENT_ORIGIN` or `CLIENT_ORIGINS` as a comma-separated allowlist for CORS and Socket.IO.
+
 Example environment settings:
 
 - REACT_APP_API_URL=http://YOUR_SERVER_IP:5000
 - REACT_APP_SOCKET_URL=http://YOUR_SERVER_IP:5000
+- REACT_APP_GOOGLE_CLIENT_ID=your-google-client-id
+- CLIENT_ORIGIN=https://your-frontend-domain.com
+- CLIENT_ORIGINS=https://your-frontend-domain.com,https://your-second-domain.com
+
+Render checklist:
+
+- Set backend env vars in the Render dashboard, not only in local `.env` files.
+- If frontend and backend are separate Render services, point `REACT_APP_API_URL` and `REACT_APP_SOCKET_URL` to the backend service URL.
+- Set `FRONTEND_URL` to the frontend domain so password reset links open the correct site.
+
+Two-service Render note:
+
+- Backend env vars are not automatically visible to the browser.
+- If you run frontend and backend as two separate Render services, the frontend must still know the backend URL either through its own Render env vars or by being served from the same origin as the backend.
+- If you do not want any frontend env vars, the backend must serve the built frontend and both app and API must share one origin.
+
+AWS/EC2 checklist:
+
+- Run the backend on `PORT` from the environment and allow the port in the security group.
+- If hosting the frontend on the same Node server, keep `frontend/serve-build.js` as the entrypoint for the built UI.
+- If hosting frontend separately, make sure the domain is included in `CLIENT_ORIGIN` or `CLIENT_ORIGINS`.
 
 ## 11. Run Locally
 
@@ -281,6 +308,12 @@ Google sign-in:
 - The login page renders a Google button when `REACT_APP_GOOGLE_CLIENT_ID` is set.
 - Existing Google users are signed in directly.
 - New Google users are prompted to choose a username before the account is created.
+
+Email OTP / verification on Render:
+
+- Render does not read local `.env` files from your machine.
+- You must set `SMTP_SERVICE` or `SMTP_HOST`, plus `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in the Render service environment variables.
+- If those variables are missing, OTP verification and reset emails will fail with a clear `SMTP_NOT_CONFIGURED` message.
 
 ## 13. Security Notes
 

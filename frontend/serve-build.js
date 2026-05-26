@@ -21,6 +21,14 @@ const mimeTypes = {
   '.txt': 'text/plain; charset=utf-8'
 };
 
+function buildRuntimeConfig() {
+  return `window.__APP_CONFIG__ = ${JSON.stringify({
+    REACT_APP_GOOGLE_CLIENT_ID: process.env.REACT_APP_GOOGLE_CLIENT_ID || '',
+    REACT_APP_API_URL: process.env.REACT_APP_API_URL || '',
+    REACT_APP_SOCKET_URL: process.env.REACT_APP_SOCKET_URL || '',
+  })};`;
+}
+
 function sendFile(res, filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
@@ -45,6 +53,15 @@ const server = http.createServer((req, res) => {
   const requestPath = decodeURIComponent(parsedUrl.pathname || '/');
   const safePath = path.normalize(requestPath).replace(/^([.]{2}[\/\\])+/, '');
   const filePath = path.join(buildDir, safePath);
+
+  if (safePath === '/runtime-config.js') {
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript; charset=utf-8',
+      'Cache-Control': 'no-store'
+    });
+    res.end(buildRuntimeConfig());
+    return;
+  }
 
   if (safePath !== '/' && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
     sendFile(res, filePath);

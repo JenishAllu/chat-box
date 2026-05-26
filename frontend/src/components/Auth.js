@@ -4,8 +4,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import validateUsername, { normalizeUsername } from '../utils/usernameValidator';
 import './Auth.css';
 
-const API_BASE = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
-const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
+const runtimeConfig = window.__APP_CONFIG__ || {};
+const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
+const GOOGLE_CLIENT_ID = runtimeConfig.REACT_APP_GOOGLE_CLIENT_ID || process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
 function syncAuthHeader(token) {
   if (token) {

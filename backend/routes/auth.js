@@ -107,6 +107,9 @@ router.post('/register', authLimiter, async (req, res) => {
       } catch (cleanupErr) {
         console.error('register rollback error', cleanupErr);
       }
+      if (mailErr && mailErr.code === 'SMTP_NOT_CONFIGURED') {
+        return res.status(503).json({ msg: mailErr.message });
+      }
       return res.status(503).json({ msg: 'Registration failed. Could not send OTP. Please try again.' });
     }
 
@@ -170,7 +173,7 @@ router.post('/verify-otp', authLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error('verify otp error', err);
-    return res.status(500).json({ msg: 'OTP verification failed' });
+    return res.status(500).json({ msg: err.code === 'SMTP_NOT_CONFIGURED' ? err.message : 'OTP verification failed' });
   }
 });
 
@@ -206,7 +209,7 @@ router.post('/resend-otp', authLimiter, async (req, res) => {
     return res.json(resp);
   } catch (err) {
     console.error('resend otp error', err);
-    return res.status(500).json({ msg: 'Failed to resend OTP' });
+    return res.status(500).json({ msg: err.code === 'SMTP_NOT_CONFIGURED' ? err.message : 'Failed to resend OTP' });
   }
 });
 
@@ -273,7 +276,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
     return res.json(responseBody);
   } catch (err) {
     console.error('forgot password error', err);
-    return res.status(500).json({ msg: 'Failed to send password reset link' });
+    return res.status(500).json({ msg: err.code === 'SMTP_NOT_CONFIGURED' ? err.message : 'Failed to send password reset link' });
   }
 });
 
@@ -306,7 +309,7 @@ router.post('/forgot-password-otp', authLimiter, async (req, res) => {
     return res.json(responseBody);
   } catch (err) {
     console.error('forgot password otp error', err);
-    return res.status(500).json({ msg: 'Failed to send password reset OTP' });
+    return res.status(500).json({ msg: err.code === 'SMTP_NOT_CONFIGURED' ? err.message : 'Failed to send password reset OTP' });
   }
 });
 

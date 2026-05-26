@@ -14,13 +14,25 @@ dotenv.config();
 const PORT = process.env.PORT || 5000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "*";
 
+function parseOrigins(value) {
+  if (!value || value === '*') return '*';
+  const origins = String(value)
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+  return origins.length > 0 ? origins : '*';
+}
+
+const allowedOrigins = parseOrigins(process.env.CLIENT_ORIGINS || CLIENT_ORIGIN);
+
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
 const app = express();
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({ origin: CLIENT_ORIGIN === "*" ? true : CLIENT_ORIGIN }));
+app.set('trust proxy', 1);
+app.use(cors({ origin: allowedOrigins === '*' ? true : allowedOrigins, credentials: true }));
 app.use(mongoSanitize());
 // allow larger payloads for image uploads (base64 data URLs)
 app.use(express.json({ limit: '10mb' }));
@@ -39,7 +51,7 @@ app.use("/api/messages", require("./routes/messages"));
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: CLIENT_ORIGIN === "*" ? "*" : CLIENT_ORIGIN },
+  cors: { origin: allowedOrigins === '*' ? '*' : allowedOrigins },
   maxHttpBufferSize: 50 * 1024 * 1024 // 50MB for large file uploads
 });
 

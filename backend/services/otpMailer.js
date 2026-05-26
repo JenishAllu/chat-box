@@ -37,8 +37,24 @@ function getTransporter() {
   return nodemailer.createTransport(transportOptions);
 }
 
-async function sendVerificationOtpEmail({ to, otp }) {
+function requireTransporter(actionLabel) {
   const transporter = getTransporter();
+  if (transporter) {
+    return transporter;
+  }
+
+  const message = `${actionLabel} email delivery is not configured. Set SMTP_HOST or SMTP_SERVICE, SMTP_USER, SMTP_PASS, and SMTP_FROM on Render.`;
+  if (process.env.NODE_ENV === 'production') {
+    const error = new Error(message);
+    error.code = 'SMTP_NOT_CONFIGURED';
+    throw error;
+  }
+
+  return null;
+}
+
+async function sendVerificationOtpEmail({ to, otp }) {
+  const transporter = requireTransporter('Verification OTP');
   const fromAddress =
     pickEnv('SMTP_FROM', 'EMAIL_FROM', 'MAIL_FROM', 'SMTP_USER', 'EMAIL_USER', 'MAIL_USER') ||
     'no-reply@example.com';
@@ -62,7 +78,7 @@ async function sendVerificationOtpEmail({ to, otp }) {
 }
 
 async function sendPasswordResetEmail({ to, resetUrl }) {
-  const transporter = getTransporter();
+  const transporter = requireTransporter('Password reset link');
   const fromAddress =
     pickEnv('SMTP_FROM', 'EMAIL_FROM', 'MAIL_FROM', 'SMTP_USER', 'EMAIL_USER', 'MAIL_USER') ||
     'no-reply@example.com';
@@ -86,7 +102,7 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
 }
 
 async function sendPasswordResetOtpEmail({ to, otp }) {
-  const transporter = getTransporter();
+  const transporter = requireTransporter('Password reset OTP');
   const fromAddress =
     pickEnv('SMTP_FROM', 'EMAIL_FROM', 'MAIL_FROM', 'SMTP_USER', 'EMAIL_USER', 'MAIL_USER') ||
     'no-reply@example.com';
