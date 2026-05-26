@@ -826,7 +826,6 @@ function Auth({ onAuthSuccess }) {
       </div>
     </div>
   );
-  );
 }
 
 export default Auth;
