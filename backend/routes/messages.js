@@ -52,6 +52,37 @@ router.get('/unread/:userId', async (req, res) => {
   }
 });
 
+// get latest message timestamps per room for a user
+router.get('/latest/:userId', async (req, res) => {
+  try {
+    if (String(req.user._id) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const latest = await Message.aggregate([
+      {
+        $match: {
+          $or: [{ to: req.params.userId }, { from: req.params.userId }],
+          deletedBy: { $ne: req.params.userId }
+        }
+      },
+      {
+        $group: {
+          _id: '$room',
+          timestamp: { $max: '$createdAt' }
+        }
+      }
+    ]);
+    const map = {};
+    latest.forEach(item => {
+      if (item._id) map[item._id] = new Date(item.timestamp).getTime();
+    });
+    return res.json(map);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load latest messages' });
+  }
+});
+
 // get pending message requests grouped by sender
 router.get('/requests/:userId', async (req, res) => {
   try {

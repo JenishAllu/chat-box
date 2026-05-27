@@ -533,5 +533,22 @@ router.post('/report', async (req, res) => {
   }
 });
 
+// POST fetch multiple user profiles by ID
+router.post('/profiles', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+    const mongoose = require('mongoose');
+    const limitedIds = ids.slice(0, 100).filter(id => mongoose.Types.ObjectId.isValid(id));
+    const users = await User.find({ _id: { $in: limitedIds } }).select('-password -emailOtp -otpExpiry');
+    res.json(users);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch profiles' });
+  }
+});
+
 module.exports = router;
 

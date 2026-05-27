@@ -1,4 +1,4 @@
-﻿# Advanced Real-Time Insta Chat System - Full Documentation
+# Advanced Real-Time Insta Chat System - Full Documentation
 
 This document is the complete technical documentation of the current working project state, including:
 - What was changed
@@ -394,6 +394,15 @@ Messages:
 - Kept the OAuth flow login-first and only asked for a username when a Google account is new.
 - Fixed the frontend stylesheet parse error that appeared after the OAuth button UI was added.
 - Confirmed the project uses Google Identity Services popup/button flow, so redirect URIs are not required for the current implementation.
+
+### Latest Updates (UI & Performance)
+
+- Removed video and audio call options from the chat header.
+- Restricted group renaming to group admins only, introducing an inline edit input for seamless updates.
+- Fixed chat theme inconsistency in light mode by removing a hardcoded dark background color from `.chat-root`.
+- Replaced the default React favicon with a custom SVG thunder icon matching the application logo.
+- **Performance Optimization**: Consolidated 9 concurrent initial data-loading API requests into a single `Promise.allSettled` block, eliminating multiple staggered React re-renders and noticeably reducing UI lag upon login.
+- **Social Counting Fixes**: Added an explicit fetch for the fresh user profile upon initial load to instantly "self-heal" ghost accounts in the followers array (preventing delayed count updates). Also updated `sendChatRequest` to immediately mutate the local state so pending follower counts increment in real-time.
 
 ### Notes for future updates
 

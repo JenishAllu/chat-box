@@ -146,6 +146,7 @@ function Chat({ onLogout }) {
   const [selected, setSelected] = useState(null);
   const [msg, setMsg] = useState("");
   const [messages, setMessages] = useState([]);
+  const [conversationActivityMap, setConversationActivityMap] = useState({});
   const [unreadCounts, setUnreadCounts] = useState({});
   const [openMenuId, setOpenMenuId] = useState(null);
   const [openHeaderMenu, setOpenHeaderMenu] = useState(false);
@@ -228,6 +229,7 @@ function Chat({ onLogout }) {
   // ─── Following / Followers modal ──────────────────────────────────────────
   const [showFollowModal, setShowFollowModal] = useState(false);
   const [followModalTab, setFollowModalTab] = useState('following'); // 'following' | 'followers' | 'pending'
+  const [followModalUsers, setFollowModalUsers] = useState([]);
 
   // ─── Profile modal ──────────────────────────────────────────────────────────
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -428,18 +430,20 @@ function Chat({ onLogout }) {
     });
   }, [messages, selected, user._id]);
 
-  const conversationActivityMap = useMemo(() => {
-    const map = {};
-
-    messages.forEach(m => {
-      const roomId = m.room || (m.isGroup ? m.to : room(m.from, m.to));
-      const timestamp = new Date(m.createdAt || 0).getTime();
-      if (!map[roomId] || timestamp > map[roomId]) {
-        map[roomId] = timestamp;
-      }
+  useEffect(() => {
+    setConversationActivityMap(prev => {
+      let changed = false;
+      const next = { ...prev };
+      messages.forEach(m => {
+        const roomId = m.room || (m.isGroup ? m.to : room(m.from, m.to));
+        const timestamp = new Date(m.createdAt || Date.now()).getTime();
+        if (!next[roomId] || timestamp > next[roomId]) {
+          next[roomId] = timestamp;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
     });
-
-    return map;
   }, [messages]);
 
   const sortedGroups = useMemo(() => {
@@ -501,6 +505,23 @@ function Chat({ onLogout }) {
   const isAccepted = (uId) => acceptedSet.has(String(uId));
   const hasPendingRequest = (uId) => pendingFollowingSet.has(String(uId));
 
+  // Auto-expand request dropdowns when a new request arrives
+  const prevChatReqCount = useRef(0);
+  useEffect(() => {
+    if (chatRequests.length > prevChatReqCount.current) {
+      setExpandedSections(prev => ({ ...prev, pendingRequests: true }));
+    }
+    prevChatReqCount.current = chatRequests.length;
+  }, [chatRequests.length]);
+
+  const prevMsgReqCount = useRef(0);
+  useEffect(() => {
+    if (messageRequests.length > prevMsgReqCount.current) {
+      setExpandedSections(prev => ({ ...prev, messageRequests: true }));
+    }
+    prevMsgReqCount.current = messageRequests.length;
+  }, [messageRequests.length]);
+
   // ─── Data loading ─────────────────────────────────────────────────────────
   const loadSuggestions = async () => {
     try {
@@ -546,19 +567,53 @@ function Chat({ onLogout }) {
   };
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/users/${localUser._id}/accepted-chats`)
-      .then(res => setUsers(res.data));
-    axios.get(`${API_BASE}/api/groups/${localUser._id}`)
-      .then(res => setGroups(res.data.map(g => ({ ...g, isGroup: true, username: g.name }))))
-      .catch(err => console.error("failed to load groups", err));
-    axios.get(`${API_BASE}/api/messages/unread/${localUser._id}`)
-      .then(res => setUnreadCounts(res.data))
-      .catch(err => console.error("failed to load unread counts", err));
     socket.emit("setUserId", localUser._id);
-    loadSuggestions();
-    loadChatRequests();
-    loadMessageRequests();
-    loadRequestHistory();
+    const loadInitialData = async () => {
+      try {
+        const [
+          acceptedChatsRes,
+          groupsRes,
+          unreadRes,
+          latestMsgRes,
+          suggestionsRes,
+          chatReqRes,
+          msgReqRes,
+          reqHistRes,
+          userProfileRes
+        ] = await Promise.allSettled([
+          axios.get(`${API_BASE}/api/users/${localUser._id}/accepted-chats`),
+          axios.get(`${API_BASE}/api/groups/${localUser._id}`),
+          axios.get(`${API_BASE}/api/messages/unread/${localUser._id}`),
+          axios.get(`${API_BASE}/api/messages/latest/${localUser._id}`),
+          axios.get(`${API_BASE}/api/users/${localUser._id}/suggestions`),
+          axios.get(`${API_BASE}/api/users/${localUser._id}/chat-requests`),
+          axios.get(`${API_BASE}/api/messages/requests/${localUser._id}`),
+          axios.get(`${API_BASE}/api/users/${localUser._id}/request-history`),
+          axios.get(`${API_BASE}/api/users/${localUser._id}`)
+        ]);
+
+        if (userProfileRes.status === 'fulfilled') {
+          setLocalUser(userProfileRes.value.data);
+          localStorage.setItem('user', JSON.stringify(userProfileRes.value.data));
+        }
+        if (acceptedChatsRes.status === 'fulfilled') setUsers(acceptedChatsRes.value.data);
+        if (groupsRes.status === 'fulfilled') setGroups(groupsRes.value.data.map(g => ({ ...g, isGroup: true, username: g.name })));
+        if (unreadRes.status === 'fulfilled') setUnreadCounts(unreadRes.value.data);
+        if (latestMsgRes.status === 'fulfilled') setConversationActivityMap(prev => ({ ...prev, ...latestMsgRes.value.data }));
+        if (suggestionsRes.status === 'fulfilled') setSuggestions(suggestionsRes.value.data);
+        if (chatReqRes.status === 'fulfilled') setChatRequests(chatReqRes.value.data);
+        if (msgReqRes.status === 'fulfilled') {
+          setMessageRequests((Array.isArray(msgReqRes.value.data) ? msgReqRes.value.data : []).map(item => ({
+            ...item,
+            latestMessage: item.latestMessage ? decryptMessage(item.latestMessage, ENCRYPTION_KEY) : item.latestMessage,
+          })));
+        }
+        if (reqHistRes.status === 'fulfilled') {
+          setRequestHistory(Array.isArray(reqHistRes.value.data) ? reqHistRes.value.data : []);
+        }
+      } catch (err) { console.error("Failed to load initial data", err); }
+    };
+    loadInitialData();
   }, [localUser._id]);
 
   useEffect(() => {
@@ -573,6 +628,38 @@ function Chat({ onLogout }) {
     }, 400);
     return () => clearTimeout(delay);
   }, [discoverSearch, localUser._id]);
+
+  useEffect(() => {
+    if (!showFollowModal) return;
+    const profileUser = viewingUser || localUser;
+    const isMe = profileUser._id === localUser._id;
+    const followingIds = (profileUser.following || []).map(String);
+    const followerIds = (profileUser.followers || []).map(String);
+    const pendingIds = (isMe ? (localUser.pendingFollowing || []) : []).map(String);
+    const listIds = followModalTab === 'following' ? followingIds : (followModalTab === 'followers' ? followerIds : pendingIds);
+    
+    if (listIds.length === 0) {
+      setFollowModalUsers([]);
+      return;
+    }
+    
+    axios.post(`${API_BASE}/api/users/profiles`, { ids: listIds })
+      .then(res => {
+        setFollowModalUsers(res.data);
+        // Self-heal ghost IDs
+        if (isMe && listIds.length <= 100 && res.data.length < listIds.length) {
+          const validIds = res.data.map(u => String(u._id));
+          setLocalUser(prev => {
+            const next = { ...prev };
+            if (followModalTab === 'following') next.following = validIds;
+            else if (followModalTab === 'followers') next.followers = validIds;
+            else if (followModalTab === 'pending') next.pendingFollowing = validIds;
+            return next;
+          });
+        }
+      })
+      .catch(err => console.error("failed to load follow modal users", err));
+  }, [showFollowModal, followModalTab, viewingUser, localUser]);
 
   // ─── Socket: online / offline / typing ───────────────────────────────────
   useEffect(() => {
@@ -602,6 +689,7 @@ function Chat({ onLogout }) {
       showBrowserNotification('New Chat Request', { body: `${from.username} sent you a chat request!`, icon: from.avatar });
       // Add to requests list if not already there
       setChatRequests(prev => prev.find(u => u._id === from._id) ? prev : [...prev, from]);
+      setExpandedSections(prev => ({ ...prev, pendingRequests: true }));
       setRequestHistory(prev => {
         const alreadyPending = prev.some(h => String(h?.from?._id || h?.from) === String(from._id) && h.status === 'pending');
         if (alreadyPending) return prev;
@@ -634,6 +722,7 @@ function Chat({ onLogout }) {
         return [nextEntry, ...prev];
       });
       setChatRequests(prev => prev.find(u => u._id === from._id) ? prev : [...prev, from]);
+      setExpandedSections(prev => ({ ...prev, messageRequests: true }));
     });
 
     socket.on("chatAccepted", ({ by }) => {
@@ -645,6 +734,9 @@ function Chat({ onLogout }) {
           const me = res.data;
           if (me) { setLocalUser(me); localStorage.setItem('user', JSON.stringify(me)); }
         });
+      axios.get(`${API_BASE}/api/users/${localUser._id}/accepted-chats`)
+        .then(usersRes => setUsers(usersRes.data))
+        .catch(err => console.error("failed to load accepted chats", err));
     });
 
     socket.on("errorMessage", ({ error }) => {
@@ -780,6 +872,11 @@ function Chat({ onLogout }) {
           showBrowserNotification('New Message', { body: `New message received` });
         }
       }
+      
+      // Update activity map for background chat
+      const roomId = data.room || (data.isGroup ? data.to : room(data.from, data.to));
+      const timestamp = new Date(data.createdAt || Date.now()).getTime();
+      setConversationActivityMap(prev => ({ ...prev, [roomId]: Math.max(prev[roomId] || 0, timestamp) }));
     };
 
     const seenHandler = (msgId) => setMessages(prev => prev.map(m => m._id === msgId ? { ...m, seen: true } : m));
@@ -873,6 +970,10 @@ function Chat({ onLogout }) {
       const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/${(following || pending) ? 'unfollow' : 'follow'}/${uId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
+      
+      if (viewingUser && viewingUser._id === uId) {
+        axios.get(`${API_BASE}/api/users/${uId}`).then(res => setViewingUser(res.data)).catch(()=>{});
+      }
       if (!following && !pending) {
         // Emit socket event so target gets live notification
         socket.emit("sendChatRequest", { from: localUser._id, to: uId });
@@ -890,6 +991,10 @@ function Chat({ onLogout }) {
       const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/accept-chat/${requesterId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
+      
+      if (viewingUser && viewingUser._id === requesterId) {
+        axios.get(`${API_BASE}/api/users/${requesterId}`).then(res => setViewingUser(res.data)).catch(()=>{});
+      }
       // Emit real-time accepted event
       socket.emit("chatRequestAccepted", { from: localUser._id, to: requesterId });
       // Remove from requests
@@ -897,6 +1002,11 @@ function Chat({ onLogout }) {
       setMessageRequests(prev => prev.filter(item => String(item?.from?._id) !== String(requesterId)));
       loadRequestHistory(res.data);
       loadMessageRequests(res.data);
+      
+      axios.get(`${API_BASE}/api/users/${localUser._id}/accepted-chats`)
+        .then(usersRes => setUsers(usersRes.data))
+        .catch(err => console.error("failed to load accepted chats", err));
+
       showToast('✅ Chat request accepted!', 'success');
     } catch { showToast('Failed to accept request', 'error'); }
   };
@@ -906,6 +1016,10 @@ function Chat({ onLogout }) {
       const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/decline-chat/${requesterId}`);
       setLocalUser(res.data);
       localStorage.setItem('user', JSON.stringify(res.data));
+      
+      if (viewingUser && viewingUser._id === requesterId) {
+        axios.get(`${API_BASE}/api/users/${requesterId}`).then(res => setViewingUser(res.data)).catch(()=>{});
+      }
       setChatRequests(prev => prev.filter(u => u._id !== requesterId));
       setMessageRequests(prev => prev.filter(item => String(item?.from?._id) !== String(requesterId)));
       loadRequestHistory(res.data);
@@ -916,7 +1030,9 @@ function Chat({ onLogout }) {
 
   const sendChatRequest = async (targetUser) => {
     try {
-      await axios.put(`${API_BASE}/api/users/${localUser._id}/request-chat/${targetUser._id}`);
+      const res = await axios.put(`${API_BASE}/api/users/${localUser._id}/request-chat/${targetUser._id}`);
+      setLocalUser(res.data);
+      localStorage.setItem('user', JSON.stringify(res.data));
       socket.emit("sendChatRequest", { from: localUser._id, to: targetUser._id });
       showToast(`📨 Chat request sent to ${targetUser.username}!`, 'success');
       setShowRequestModal(null);
@@ -1406,27 +1522,25 @@ function Chat({ onLogout }) {
     endSession();
   };
 
-  // ─── Accepted chats (for Chats tab) ──────────────────────────────────────
-  const acceptedUserList = useMemo(() => {
-    return users
-      .filter(u => isAccepted(u._id))
-      .sort((a, b) => {
-        const aRoom = room(user._id, a._id);
-        const bRoom = room(user._id, b._id);
-        const aTime = conversationActivityMap[aRoom] || 0;
-        const bTime = conversationActivityMap[bRoom] || 0;
-        if (aTime !== bTime) return bTime - aTime;
-        return String(a.username || '').localeCompare(String(b.username || ''));
-      });
-  }, [users, acceptedSet, conversationActivityMap, user._id]);
+  // ─── Accepted chats & Groups (for Chats tab) ───────────────────────────────
+  const allSortedChats = useMemo(() => {
+    const acceptedUsers = users.filter(u => isAccepted(u._id));
+    return [...groups, ...acceptedUsers].sort((a, b) => {
+      const aRoom = a.isGroup ? a._id : room(user._id, a._id);
+      const bRoom = b.isGroup ? b._id : room(user._id, b._id);
+      const aTime = conversationActivityMap[aRoom] || 0;
+      const bTime = conversationActivityMap[bRoom] || 0;
+      if (aTime !== bTime) return bTime - aTime;
+      const aName = a.username || a.name || '';
+      const bName = b.username || b.name || '';
+      return String(aName).localeCompare(String(bName));
+    });
+  }, [groups, users, acceptedSet, conversationActivityMap, user._id]);
 
   const forwardTargets = useMemo(() => {
     const currentId = selected?._id ? String(selected._id) : '';
-    return [
-      ...sortedGroups.filter(item => String(item._id) !== currentId),
-      ...acceptedUserList.filter(item => String(item._id) !== currentId),
-    ];
-  }, [sortedGroups, acceptedUserList, selected?._id]);
+    return allSortedChats.filter(item => String(item._id) !== currentId);
+  }, [allSortedChats, selected?._id]);
 
   const filteredForwardTargets = useMemo(() => {
     const query = forwardSearch.trim().toLowerCase();
@@ -1443,48 +1557,29 @@ function Chat({ onLogout }) {
     if (sidebarTab === 'chats') {
       return (
         <>
-          {/* Groups first */}
-          {sortedGroups.filter(u => !discoverSearch.trim() || (u.username || u.name || '').toLowerCase().includes(discoverSearch.trim().toLowerCase())).map(u => {
+          {/* Combined Groups and Accepted DMs */}
+          {allSortedChats.filter(u => !discoverSearch.trim() || (u.username || u.name || '').toLowerCase().includes(discoverSearch.trim().toLowerCase())).map(u => {
             const unread = unreadCounts[u._id] || 0;
+            const isOnline = !u.isGroup && (onlineUsers[u._id] || false);
             return (
               <div key={u._id} className={`chat-list-item-active flex items-center gap-4 p-4 rounded-2xl group cursor-pointer ${selected?._id === u._id ? 'bg-primary-container/10 border-l-4 border-primary' : 'hover:bg-surface-container-high'}`} onClick={() => openChat(u)}>
-                <div className="relative">
-                  <div className="w-12 h-12 rounded-full bg-tertiary-container flex items-center justify-center text-on-tertiary-container font-bold text-headline-sm overflow-hidden" onClick={e => { e.stopPropagation(); if (u.avatar) handleAvatarClick(u.avatar); }}>
-                    {u.avatar ? <img src={u.avatar} alt="g" className="w-full h-full object-cover" /> : (u.username || 'G').slice(0, 1).toUpperCase()}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-baseline">
-                    <p className="text-label-md font-label-md text-on-surface truncate">{u.username || 'Group'}</p>
-                    <span className="text-label-sm font-label-sm text-on-surface-variant">Group</span>
-                  </div>
-                </div>
-                {unread > 0 && <div className="bg-primary text-white text-[10px] font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unread > 99 ? '99+' : unread}</div>}
-              </div>
-            );
-          })}
-          {/* Accepted DMs */}
-          {acceptedUserList.filter(u => !discoverSearch.trim() || (u.username || '').toLowerCase().includes(discoverSearch.trim().toLowerCase())).map(u => {
-            const unread = unreadCounts[u._id] || 0;
-            const isOnline = onlineUsers[u._id] || false;
-            return (
-              <div key={u._id} className={`chat-list-item-active flex items-center gap-4 p-4 rounded-2xl group cursor-pointer ${selected?._id === u._id ? 'bg-primary-container/10 border-l-4 border-primary' : 'hover:bg-surface-container-high'}`} onClick={() => openChat(u)}>
-                <div className="relative" onClick={e => { e.stopPropagation(); openUserProfile(u); }}>
-                  <div className="w-12 h-12 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-headline-sm overflow-hidden">
-                    {u.avatar ? <img src={u.avatar} alt="u" className="w-full h-full object-cover" /> : (u.username || 'U').slice(0, 1).toUpperCase()}
+                <div className="relative" onClick={e => { e.stopPropagation(); if (u.isGroup) { if (u.avatar) handleAvatarClick(u.avatar); } else openUserProfile(u); }}>
+                  <div className={`w-12 h-12 rounded-full ${u.isGroup ? 'bg-tertiary-container text-on-tertiary-container' : 'bg-secondary-container text-on-secondary-container'} flex items-center justify-center font-bold text-headline-sm overflow-hidden`}>
+                    {u.avatar ? <img src={u.avatar} alt="img" className="w-full h-full object-cover" /> : (u.username || u.name || (u.isGroup ? 'G' : 'U')).slice(0, 1).toUpperCase()}
                   </div>
                   {isOnline && <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-surface rounded-full"></span>}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-baseline">
-                    <p className="text-label-md font-label-md text-on-surface truncate">{u.username || 'user'}</p>
+                    <p className="text-label-md font-label-md text-on-surface truncate">{u.username || u.name}</p>
+                    {u.isGroup && <span className="text-label-sm font-label-sm text-on-surface-variant">Group</span>}
                   </div>
                 </div>
                 {unread > 0 && <div className="bg-primary text-white text-[10px] font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unread > 99 ? '99+' : unread}</div>}
               </div>
             );
           })}
-          {groups.length === 0 && acceptedUserList.length === 0 && (
+          {allSortedChats.length === 0 && (
             <div className="flex flex-col items-center justify-center h-48 text-on-surface-variant opacity-70">
               <span className="material-symbols-outlined text-[40px] mb-2">chat</span>
               <div>No chats yet</div>
@@ -1767,7 +1862,7 @@ function Chat({ onLogout }) {
             <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'requests' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('requests'); setDiscoverSearch(''); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon={requestBadgeCount > 0 ? "mark_email_unread" : "mail"}>{requestBadgeCount > 0 ? "mark_email_unread" : "mail"}</span>
                 <span className="nav-text text-label-md font-label-md truncate">Requests</span>
-                {requestBadgeCount > 0 && <span className="tab-badge bg-primary text-white rounded-full px-2 text-[10px] ml-auto">{requestBadgeCount}</span>}
+                {requestBadgeCount > 0 && <span className="bg-primary text-white rounded-full px-[6px] py-[1px] text-[10px] font-bold ml-auto inline-flex items-center justify-center min-w-[20px]">{requestBadgeCount}</span>}
             </a>
             <a className={`nav-item flex items-center gap-4 ${sidebarTab === 'discover' ? 'bg-primary-container/20 text-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'} rounded-xl px-4 py-3 mx-2 active:scale-95 cursor-pointer`} onClick={() => { setSidebarTab('discover'); setDiscoverSearch(''); loadSuggestions(); if (isMobileViewport()) setSidebarCollapsed(true); }}>
                 <span className="material-symbols-outlined shrink-0" data-icon="contacts">contacts</span>
@@ -1880,10 +1975,25 @@ function Chat({ onLogout }) {
                       <div className="flex-1 min-w-0">
                         <h1 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2 truncate">
                           <span className="truncate" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span>{selected.username || 'User'}</span>
-                            {selected.verified && <VerifiedBadge />}
+                            {editingGroupId === selected._id ? (
+                              <input
+                                type="text"
+                                value={editGroupNameStr}
+                                onChange={(e) => setEditGroupNameStr(e.target.value)}
+                                onBlur={() => updateGroupName()}
+                                onKeyDown={(e) => e.key === 'Enter' && updateGroupName()}
+                                autoFocus
+                                style={{ background: 'var(--surface-container-high)', color: 'var(--on-surface)', border: '1px solid var(--outline)', padding: '2px 8px', borderRadius: '4px', outline: 'none', fontSize: 'inherit' }}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <>
+                                <span>{selected.username || 'User'}</span>
+                                {selected.verified && <VerifiedBadge />}
+                              </>
+                            )}
                           </span>
-                          {selected.isGroup && <span className="text-[14px] text-on-surface-variant material-symbols-outlined shrink-0" onClick={(e) => { e.stopPropagation(); setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }}>edit</span>}
+                          {selected.isGroup && isSelectedGroupAdmin && editingGroupId !== selected._id && <span className="text-[14px] text-on-surface-variant material-symbols-outlined shrink-0 cursor-pointer" onClick={(e) => { e.stopPropagation(); setEditingGroupId(selected._id); setEditGroupNameStr(selected.username || ''); }}>edit</span>}
                         </h1>
                         <p className={`text-label-sm font-label-sm truncate ${onlineUsers[selected._id] ? 'text-primary' : 'text-on-surface-variant'}`}>
                           {selected.isGroup ? `${(selected.members || []).length} members` : (onlineUsers[selected._id] ? 'Online' : 'Offline')}
@@ -1892,13 +2002,6 @@ function Chat({ onLogout }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 relative">
-
-                    <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg hidden sm:block">
-                      <span className="material-symbols-outlined" data-icon="video_call">video_call</span>
-                    </button>
-                    <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg hidden sm:block">
-                      <span className="material-symbols-outlined" data-icon="call">call</span>
-                    </button>
                     <button className="btn-interact p-2 text-on-surface-variant hover:bg-surface-container rounded-lg" onClick={() => setOpenHeaderMenu(v => !v)}>
                       <span className="material-symbols-outlined" data-icon="more_vert">more_vert</span>
                     </button>
@@ -2157,7 +2260,7 @@ function Chat({ onLogout }) {
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-8 relative z-10 select-none bg-transparent">
                 {/* A beautiful glassmorphic container with entry animations */}
-                <div className="max-w-xl w-full p-10 lg:p-14 rounded-3xl bg-surface-container-low/40 backdrop-blur-xl border border-outline-variant/30 shadow-2xl flex flex-col items-center justify-center transition-all duration-500 animate-slide-up-fade" style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.05)' }}>
+                <div className="max-w-xl w-full p-10 lg:p-14 rounded-3xl bg-surface-container-low/40 backdrop-blur-xl border border-outline-variant/30 shadow-2xl flex flex-col items-center justify-center transition-all duration-500 animate-slide-up-fade">
                   
                   {/* Animated floating logo/icon wrapper */}
                   <div className="relative mb-8 group">
@@ -2168,13 +2271,13 @@ function Chat({ onLogout }) {
                   </div>
                   
                   {/* Large Typography Title */}
-                  <h2 className="text-headline-lg font-headline-lg text-on-surface mb-3 tracking-tight font-extrabold" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.3)' }}>
+                  <h2 className="text-headline-lg font-headline-lg text-on-surface mb-3 tracking-tight font-extrabold">
                     Welcome, {displayName}!
                   </h2>
                   
                   {/* Professional Subtitle with refined spacing */}
                   <p className="text-body-lg font-body-lg text-on-surface-variant max-w-md leading-relaxed">
-                    {acceptedUserList.length === 0
+                    {allSortedChats.length === 0
                       ? 'Connect with friends to start chatting. Search and discover profiles in the Explore tab!'
                       : 'Select a conversation from the left sidebar to start messaging instantly.'}
                   </p>
@@ -2333,7 +2436,7 @@ function Chat({ onLogout }) {
         const followerIds = (profileUser.followers || []).map(String);
         const pendingIds = (isMe ? (localUser.pendingFollowing || []) : []).map(String);
         const listIds = followModalTab === 'following' ? followingIds : (followModalTab === 'followers' ? followerIds : pendingIds);
-        const listUsers = users.filter(u => listIds.includes(String(u._id)));
+        const listUsers = followModalUsers;
         return (
           <div className="modal-overlay" onClick={() => setShowFollowModal(false)}>
             <div className="modal-content follow-modal" onClick={e => e.stopPropagation()}>
@@ -2619,7 +2722,7 @@ function Chat({ onLogout }) {
                         }}
                       >
                         <div className={`theme-dot ${t.class}`}></div>
-                        <span>{t.name}</span>
+                        <span className="text-on-surface">{t.name}</span>
                       </button>
                     ))}
                   </div>
@@ -2659,10 +2762,10 @@ function Chat({ onLogout }) {
                       <label className="profile-label" style={{ marginBottom: '6px' }}>Preset Gradients</label>
                       <div className="flex flex-wrap gap-2">
                         {[
-                          { name: 'Aurora', value: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%)' },
-                          { name: 'Sunset', value: 'linear-gradient(135deg, #2e0817 0%, #12030f 50%, #03001e 100%)' },
-                          { name: 'Ocean', value: 'linear-gradient(135deg, #021b19 0%, #050b14 100%)' },
-                          { name: 'Cyber', value: 'linear-gradient(135deg, #11001c 0%, #240046 50%, #3c096c 100%)' }
+                          { name: 'Aurora', value: 'linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%)' },
+                          { name: 'Sunset', value: 'linear-gradient(135deg, #ff7e5f 0%, #feb47b 100%)' },
+                          { name: 'Ocean', value: 'linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)' },
+                          { name: 'Cyber', value: 'linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)' }
                         ].map(g => (
                           <button
                             key={g.name}
@@ -2682,11 +2785,11 @@ function Chat({ onLogout }) {
                       <label className="profile-label" style={{ marginBottom: '6px' }}>Preset Colors & Custom Color</label>
                       <div className="flex flex-wrap items-center gap-3">
                         {[
-                          '#121214', // Charcoal
-                          '#0a0f1d', // Navy
-                          '#061c15', // Emerald
-                          '#170b22', // Plum
-                          '#1c0d02'  // Cocoa
+                          '#0f172a', // Slate
+                          '#1e40af', // Blue
+                          '#047857', // Emerald
+                          '#be185d', // Pink
+                          '#b45309'  // Amber
                         ].map(c => (
                           <button
                             key={c}
@@ -3041,7 +3144,7 @@ function Chat({ onLogout }) {
 
             <div style={{ marginBottom: '10px', fontSize: '12px', color: 'var(--muted)' }}>
               Admins: {selectedGroupAdminIds.length > 0
-                ? selectedGroupAdminIds.map(id => selectedGroup.admins?.find(a => String(a._id || a) === String(id))?.username || 'User').join(', ')
+                ? selectedGroupAdminIds.map(id => selected.admins?.find(a => String(a._id || a) === String(id))?.username || 'User').join(', ')
                 : 'Unknown'}
             </div>
 
@@ -3131,6 +3234,8 @@ function Chat({ onLogout }) {
                 const memberAvatar = memberObj?.avatar;
                 const isMe = memberId === String(localUser?._id);
                 const isMemberAdmin = selectedGroupAdminIds.includes(memberId);
+                const isFollowingMem = isFollowing(memberId);
+                const isPendingMem = hasPendingRequest(memberId);
                 return (
                   <div
                     key={memberId}
@@ -3153,6 +3258,18 @@ function Chat({ onLogout }) {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {!isMe && (
+                        <button
+                          className={`btn-follow ${isFollowingMem || isPendingMem ? 'btn-unfollow' : ''}`}
+                          style={{ padding: '4px 10px', fontSize: '11px', background: isFollowingMem || isPendingMem ? 'transparent' : 'var(--primary)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFollow(memberId);
+                          }}
+                        >
+                          {isPendingMem ? 'Cancel' : (isFollowingMem ? 'Unfollow' : 'Follow')}
+                        </button>
+                      )}
                       {isSelectedGroupAdmin && !isMemberAdmin && (
                         <button
                           className="btn-follow"

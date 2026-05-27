@@ -2386,9 +2386,7 @@ html, body, #root {
 
 /* Apply background styles programmatically */
 .chat-root {
-  background: var(--chat-bg, radial-gradient(circle at 15% 50%, rgba(144, 19, 254, 0.15), transparent 25%),
-              radial-gradient(circle at 85% 30%, rgba(0, 212, 255, 0.15), transparent 25%)) !important;
-  background-color: #030408 !important;
+  /* Removed hardcoded dark backgrounds. Let theme variables and Tailwind handle it. */
 }
 
 /* ========================================================================== */
@@ -2574,9 +2572,9 @@ html, body, #root {
 }
 
 .theme-selector-btn {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: #fff;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
   border-radius: 12px;
   padding: 12px;
   cursor: pointer;
@@ -2589,8 +2587,8 @@ html, body, #root {
 }
 
 .theme-selector-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--surface-container-highest);
+  border-color: var(--outline);
   transform: translateY(-2px);
 }
 
@@ -2618,13 +2616,14 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--outline-variant);
 }
 
 .sound-toggle-label {
   font-size: 13px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--on-surface);
+  opacity: 0.85;
 }
 
 /* ========================================================================== */

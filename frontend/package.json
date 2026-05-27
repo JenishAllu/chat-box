@@ -12,7 +12,8 @@
     "socket.io-client": "^4.7.2"
   },
   "scripts": {
-    "start": "npm run build && node serve-build.js",
+    "start": "node serve-build.js",
+    "dev": "react-scripts start",
     "build": "react-scripts build"
   },
   "browserslist": {
