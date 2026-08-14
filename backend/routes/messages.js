@@ -135,6 +135,7 @@ router.get('/:userId/:otherId', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const { isGroup } = req.query;
+    const requestedLimit = Math.max(1, Math.min(Number.parseInt(req.query.limit, 10) || 100, 200));
     let room;
     if (isGroup === 'true') {
       room = req.params.otherId;
@@ -142,7 +143,8 @@ router.get('/:userId/:otherId', async (req, res) => {
       room = getRoom(req.params.userId, req.params.otherId);
     }
     const msgs = await Message.find({ room, deletedBy: { $ne: req.params.userId } })
-      .sort('createdAt')
+      .sort({ createdAt: -1 })
+      .limit(requestedLimit)
       .populate({
         path: 'replyTo',
         select: 'message media from _id',
@@ -150,7 +152,7 @@ router.get('/:userId/:otherId', async (req, res) => {
       })
       .populate('from', 'username displayName avatar')
       .lean();
-    return res.json(msgs);
+    return res.json(msgs.reverse());
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load messages' });

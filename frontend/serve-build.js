@@ -1,7 +1,27 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const url = require('url');
+
+// Load environment variables from .env if present
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  envContent.split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const match = trimmed.match(/^([^=]+)=(.*)$/);
+    if (match) {
+      const key = match[1].trim();
+      let value = match[2].trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  });
+}
 
 const buildDir = path.join(__dirname, 'build');
 const port = process.env.PORT || 3000;
@@ -49,9 +69,9 @@ function sendFile(res, filePath) {
 }
 
 const server = http.createServer((req, res) => {
-  const parsedUrl = url.parse(req.url || '/');
+  const parsedUrl = new URL(req.url || '/', 'http://localhost');
   const requestPath = decodeURIComponent(parsedUrl.pathname || '/');
-  const safePath = path.normalize(requestPath).replace(/^([.]{2}[\/\\])+/, '');
+  const safePath = path.normalize(requestPath).replace(/^([.]{2}[\/\\])+/, '').replace(/\\/g, '/');
   const filePath = path.join(buildDir, safePath);
 
   if (safePath === '/runtime-config.js') {

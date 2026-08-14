@@ -19,8 +19,8 @@ import {
 } from "../utils/audio";
 
 const runtimeConfig = window.__APP_CONFIG__ || {};
-const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
-const SOCKET_URL = runtimeConfig.REACT_APP_SOCKET_URL || process.env.REACT_APP_SOCKET_URL || API_BASE;
+const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || window.location.origin;
+const SOCKET_URL = runtimeConfig.REACT_APP_SOCKET_URL || process.env.REACT_APP_SOCKET_URL || window.location.origin;
 
 // ─── End-to-End Encryption Setup ──────────────────────────────────────────
 // Shared encryption key for all users - ensures both sender and receiver can decrypt
@@ -70,6 +70,24 @@ function Chat({ onLogout }) {
   const nav = useNavigate();
   const [localUser, setLocalUser] = useState(initialUser || {});
   const user = localUser;
+
+  const updateConversationActivity = (entries) => {
+    const items = Array.isArray(entries) ? entries : [entries];
+    setConversationActivityMap(prev => {
+      let changed = false;
+      const next = { ...prev };
+      items.forEach(entry => {
+        if (!entry) return;
+        const roomId = entry.room || (entry.isGroup ? entry.to : room(user._id, entry.to));
+        const timestamp = new Date(entry.createdAt || Date.now()).getTime();
+        if (!next[roomId] || timestamp > next[roomId]) {
+          next[roomId] = timestamp;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -250,6 +268,8 @@ function Chat({ onLogout }) {
   const [passwordDraft, setPasswordDraft] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [deletePassword, setDeletePassword] = useState('');
   const [accountActionBusy, setAccountActionBusy] = useState(false);
+  const hasLoadedSuggestionsRef = useRef(false);
+  const hasLoadedRequestDataRef = useRef(false);
 
   // ─── Visual Theme & sound synthesizer states ──────────────────────────────
   const [visualTheme, setVisualTheme] = useState(() => localStorage.getItem('chat_visual_theme') || 'aurora');
@@ -430,22 +450,6 @@ function Chat({ onLogout }) {
     });
   }, [messages, selected, user._id]);
 
-  useEffect(() => {
-    setConversationActivityMap(prev => {
-      let changed = false;
-      const next = { ...prev };
-      messages.forEach(m => {
-        const roomId = m.room || (m.isGroup ? m.to : room(m.from, m.to));
-        const timestamp = new Date(m.createdAt || Date.now()).getTime();
-        if (!next[roomId] || timestamp > next[roomId]) {
-          next[roomId] = timestamp;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [messages]);
-
   const sortedGroups = useMemo(() => {
     return [...groups].sort((a, b) => {
       const aTime = conversationActivityMap[a._id] || 0;
@@ -527,6 +531,7 @@ function Chat({ onLogout }) {
     try {
       const res = await axios.get(`${API_BASE}/api/users/${localUser._id}/suggestions`);
       setSuggestions(res.data);
+      hasLoadedSuggestionsRef.current = true;
     } catch (e) { console.error("failed to load suggestions", e); }
   };
 
@@ -536,6 +541,7 @@ function Chat({ onLogout }) {
     try {
       const res = await axios.get(`${API_BASE}/api/users/${me._id}/chat-requests`);
       setChatRequests(res.data);
+      hasLoadedRequestDataRef.current = true;
     } catch (e) { console.error("failed to load requests", e); }
   };
 
@@ -548,6 +554,7 @@ function Chat({ onLogout }) {
         ...item,
         latestMessage: item.latestMessage ? decryptMessage(item.latestMessage, ENCRYPTION_KEY) : item.latestMessage,
       })));
+      hasLoadedRequestDataRef.current = true;
     } catch (e) {
       console.error("failed to load message requests", e);
       setMessageRequests([]);
@@ -560,6 +567,7 @@ function Chat({ onLogout }) {
       if (!me?._id) return;
       const res = await axios.get(`${API_BASE}/api/users/${me._id}/request-history`);
       setRequestHistory(Array.isArray(res.data) ? res.data : []);
+      hasLoadedRequestDataRef.current = true;
     } catch (e) {
       console.error("failed to load request history", e);
       setRequestHistory([]);
@@ -575,20 +583,12 @@ function Chat({ onLogout }) {
           groupsRes,
           unreadRes,
           latestMsgRes,
-          suggestionsRes,
-          chatReqRes,
-          msgReqRes,
-          reqHistRes,
           userProfileRes
         ] = await Promise.allSettled([
           axios.get(`${API_BASE}/api/users/${localUser._id}/accepted-chats`),
           axios.get(`${API_BASE}/api/groups/${localUser._id}`),
           axios.get(`${API_BASE}/api/messages/unread/${localUser._id}`),
           axios.get(`${API_BASE}/api/messages/latest/${localUser._id}`),
-          axios.get(`${API_BASE}/api/users/${localUser._id}/suggestions`),
-          axios.get(`${API_BASE}/api/users/${localUser._id}/chat-requests`),
-          axios.get(`${API_BASE}/api/messages/requests/${localUser._id}`),
-          axios.get(`${API_BASE}/api/users/${localUser._id}/request-history`),
           axios.get(`${API_BASE}/api/users/${localUser._id}`)
         ]);
 
@@ -600,17 +600,6 @@ function Chat({ onLogout }) {
         if (groupsRes.status === 'fulfilled') setGroups(groupsRes.value.data.map(g => ({ ...g, isGroup: true, username: g.name })));
         if (unreadRes.status === 'fulfilled') setUnreadCounts(unreadRes.value.data);
         if (latestMsgRes.status === 'fulfilled') setConversationActivityMap(prev => ({ ...prev, ...latestMsgRes.value.data }));
-        if (suggestionsRes.status === 'fulfilled') setSuggestions(suggestionsRes.value.data);
-        if (chatReqRes.status === 'fulfilled') setChatRequests(chatReqRes.value.data);
-        if (msgReqRes.status === 'fulfilled') {
-          setMessageRequests((Array.isArray(msgReqRes.value.data) ? msgReqRes.value.data : []).map(item => ({
-            ...item,
-            latestMessage: item.latestMessage ? decryptMessage(item.latestMessage, ENCRYPTION_KEY) : item.latestMessage,
-          })));
-        }
-        if (reqHistRes.status === 'fulfilled') {
-          setRequestHistory(Array.isArray(reqHistRes.value.data) ? reqHistRes.value.data : []);
-        }
       } catch (err) { console.error("Failed to load initial data", err); }
     };
     loadInitialData();
@@ -660,6 +649,18 @@ function Chat({ onLogout }) {
       })
       .catch(err => console.error("failed to load follow modal users", err));
   }, [showFollowModal, followModalTab, viewingUser, localUser]);
+
+  useEffect(() => {
+    if (!localUser._id) return;
+    if (sidebarTab === 'discover' && !hasLoadedSuggestionsRef.current) {
+      loadSuggestions();
+    }
+    if (sidebarTab === 'requests' && !hasLoadedRequestDataRef.current) {
+      loadChatRequests();
+      loadMessageRequests();
+      loadRequestHistory();
+    }
+  }, [sidebarTab, localUser._id]);
 
   // ─── Socket: online / offline / typing ───────────────────────────────────
   useEffect(() => {
@@ -831,7 +832,8 @@ function Chat({ onLogout }) {
         // Decrypt message using shared encryption key
         const decryptedData = { ...data, message: decryptMessage(data.message, ENCRYPTION_KEY) };
         const idx = prev.findIndex(m => !m._id && m.from === decryptedData.from && m.to === decryptedData.to && m.message === decryptedData.message);
-        if (idx !== -1) { const next = [...prev]; next[idx] = decryptedData; return next; }
+        if (idx !== -1) { const next = [...prev]; next[idx] = decryptedData; updateConversationActivity(decryptedData); return next; }
+        updateConversationActivity(decryptedData);
         return [...prev, decryptedData];
       });
       if (data.from !== user._id) {
@@ -874,9 +876,7 @@ function Chat({ onLogout }) {
       }
       
       // Update activity map for background chat
-      const roomId = data.room || (data.isGroup ? data.to : room(data.from, data.to));
-      const timestamp = new Date(data.createdAt || Date.now()).getTime();
-      setConversationActivityMap(prev => ({ ...prev, [roomId]: Math.max(prev[roomId] || 0, timestamp) }));
+      updateConversationActivity(data);
     };
 
     const seenHandler = (msgId) => setMessages(prev => prev.map(m => m._id === msgId ? { ...m, seen: true } : m));
@@ -935,14 +935,15 @@ function Chat({ onLogout }) {
     setReplyingTo(null);
     setUnreadCounts(prev => ({ ...prev, [u._id]: 0 }));
     try {
-      const qs = u.isGroup ? '?isGroup=true' : '';
+      const qs = u.isGroup ? '?isGroup=true&limit=100' : '?limit=100';
       const res = await axios.get(`${API_BASE}/api/messages/${user._id}/${u._id}${qs}`);
       // Decrypt all messages with the shared encryption key
-      setMessages(res.data.map(m => ({
+      const nextMessages = res.data.map(m => ({
         ...m,
         message: decryptMessage(m.message, ENCRYPTION_KEY),
         replyTo: m.replyTo ? { ...m.replyTo, message: decryptMessage(m.replyTo.message, ENCRYPTION_KEY) } : m.replyTo
-      })));
+      }));
+      setMessages(nextMessages);
     } catch (err) { console.error("failed to load messages", err); }
 
     if (!u.isGroup) {
@@ -1063,6 +1064,7 @@ function Chat({ onLogout }) {
       });
       const newGroup = { ...res.data, isGroup: true, username: res.data.name };
       setGroups(prev => [...prev, newGroup]);
+      updateConversationActivity({ _id: newGroup._id, isGroup: true, room: newGroup._id, to: newGroup._id, createdAt: new Date().toISOString() });
       setShowGroupModal(false);
       setNewGroupName("");
       setNewGroupMembers([]);
@@ -1122,6 +1124,7 @@ function Chat({ onLogout }) {
       }
 
       syncUpdatedGroup(res.data);
+      updateConversationActivity({ _id: selected._id, isGroup: true, room: selected._id, to: selected._id, createdAt: new Date().toISOString() });
       setGroupAddMemberIds([]);
       setGroupAddSearch('');
       setShowGroupAddPanel(false);
@@ -1431,6 +1434,7 @@ function Chat({ onLogout }) {
 
     playSendSound();
     setMessages(prev => [...prev, optimisticMsg]);
+    updateConversationActivity(optimisticMsg);
     socket.emit('sendMessage', payload);
     setShowForwardModal(false);
     setForwardingMessage(null);
@@ -1476,6 +1480,7 @@ function Chat({ onLogout }) {
     
     playSendSound();
     setMessages(prev => [...prev, optimisticMsg]);
+    updateConversationActivity(optimisticMsg);
     socket.emit("sendMessage", payload);
     setMsg(""); setSelectedMedia(null); setReplyingTo(null);
   };
@@ -2585,14 +2590,33 @@ function Chat({ onLogout }) {
                     </div>
                   )}
                 </div>
-                {isMe && profileUser.avatar && (
+                {isMe && (
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={onFile}
+                  />
+                )}
+                {isMe && (
                   <button 
-                    onClick={removeAvatar}
-                    style={{ background: 'transparent', border: '1px solid rgba(255, 59, 48, 0.4)', color: '#ff4d4f', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', transition: 'all 0.2s' }}
-                    onMouseOver={e => e.target.style.background = 'rgba(255, 59, 48, 0.1)'}
-                    onMouseOut={e => e.target.style.background = 'transparent'}
+                    onClick={profileUser.avatar ? removeAvatar : onAvatarClick}
+                    disabled={false}
+                    style={{
+                      background: profileUser.avatar ? 'transparent' : 'rgba(59, 130, 246, 0.12)',
+                      border: profileUser.avatar ? '1px solid rgba(255, 59, 48, 0.4)' : '1px solid rgba(59, 130, 246, 0.28)',
+                      color: profileUser.avatar ? '#ff4d4f' : '#60a5fa',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={e => { e.currentTarget.style.background = profileUser.avatar ? 'rgba(255, 59, 48, 0.1)' : 'rgba(59, 130, 246, 0.18)'; }}
+                    onMouseOut={e => { e.currentTarget.style.background = profileUser.avatar ? 'transparent' : 'rgba(59, 130, 246, 0.12)'; }}
                   >
-                    Remove Photo
+                    {profileUser.avatar ? 'Remove Photo' : 'Add Photo'}
                   </button>
                 )}
               </div>

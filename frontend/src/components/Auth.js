@@ -5,7 +5,7 @@ import validateUsername, { normalizeUsername } from '../utils/usernameValidator'
 import './Auth.css';
 
 const runtimeConfig = window.__APP_CONFIG__ || {};
-const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:5000`;
+const API_BASE = runtimeConfig.REACT_APP_API_URL || process.env.REACT_APP_API_URL || window.location.origin;
 const GOOGLE_CLIENT_ID = runtimeConfig.REACT_APP_GOOGLE_CLIENT_ID || process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
 function syncAuthHeader(token) {
@@ -438,7 +438,7 @@ function Auth({ onAuthSuccess }) {
         setSuccess('Your account still needs email verification. Enter the OTP sent to your inbox.');
         setError('');
       } else {
-        setError(response.msg || response.error || 'Authentication failed');
+        setError(response.msg || response.error || err.message || 'Authentication failed');
       }
     } finally {
       setLoading(false);

@@ -4,6 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const fs = require("fs");
 const cors = require("cors");
 const helmet = require("helmet");
 const mongoSanitize = require("express-mongo-sanitize");
@@ -37,11 +38,49 @@ if (!process.env.MONGO_URI) {
   process.exit(1);
 }
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => {
+const mongoConnectionOptions = {
+  serverSelectionTimeoutMS: 5000,
+  connectTimeoutMS: 5000,
+};
+
+let mongoRetryDelayMs = 2000;
+let mongoRetryTimer = null;
+
+function scheduleMongoReconnect() {
+  if (mongoRetryTimer) return;
+  mongoRetryTimer = setTimeout(() => {
+    mongoRetryTimer = null;
+    connectMongo();
+  }, mongoRetryDelayMs);
+  mongoRetryDelayMs = Math.min(mongoRetryDelayMs * 2, 60000);
+}
+
+async function connectMongo() {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, mongoConnectionOptions);
+    mongoRetryDelayMs = 2000;
+    console.log("MongoDB Connected");
+  } catch (err) {
     console.error("MongoDB Connection Failed:", err);
-  });
+    scheduleMongoReconnect();
+  }
+}
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB disconnected');
+  scheduleMongoReconnect();
+});
+
+connectMongo();
+
+function requireDatabaseConnection(req, res, next) {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      msg: 'Database connection is unavailable. Check MONGO_URI and network access.',
+    });
+  }
+  next();
+}
 
 const app = express();
 app.use(helmet({ crossOriginResourcePolicy: false }));
@@ -53,16 +92,43 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ ok: true, uptime: process.uptime() });
+  res.status(200).json({
+    ok: true,
+    uptime: process.uptime(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'unavailable',
+  });
 });
 
-app.use("/api/auth", require("./routes/auth"));
-app.use("/api/users", require("./routes/users"));
-app.use("/api/groups", require("./routes/groups"));
+const frontendBuildPath = path.resolve(__dirname, '..', 'frontend', 'build');
+
+function buildRuntimeConfig() {
+  return `window.__APP_CONFIG__ = ${JSON.stringify({
+    REACT_APP_GOOGLE_CLIENT_ID: process.env.REACT_APP_GOOGLE_CLIENT_ID || '',
+    REACT_APP_API_URL: process.env.REACT_APP_API_URL || '',
+    REACT_APP_SOCKET_URL: process.env.REACT_APP_SOCKET_URL || '',
+  })};`;
+}
+
+app.get('/runtime-config.js', (req, res) => {
+  res.type('application/javascript; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.send(buildRuntimeConfig());
+});
+
+app.use("/api/auth", requireDatabaseConnection, require("./routes/auth"));
+app.use("/api/users", requireDatabaseConnection, require("./routes/users"));
+app.use("/api/groups", requireDatabaseConnection, require("./routes/groups"));
 // new messages routes for fetching history and marking seen
-app.use("/api/messages", require("./routes/messages"));
+app.use("/api/messages", requireDatabaseConnection, require("./routes/messages"));
 // debug/test routes
-app.use("/api/debug", require("./routes/debug"));
+app.use("/api/debug", requireDatabaseConnection, require("./routes/debug"));
+
+if (fs.existsSync(path.join(frontendBuildPath, 'index.html'))) {
+  app.use(express.static(frontendBuildPath));
+  app.get(/^\/(?!api\/).*/, (req, res) => {
+    res.sendFile(path.join(frontendBuildPath, 'index.html'));
+  });
+}
 
 
 const server = http.createServer(app);
